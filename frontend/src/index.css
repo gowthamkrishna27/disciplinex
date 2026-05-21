@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+/* Enable class-based dark mode in Tailwind v4 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Roboto", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Arial, sans-serif;
+  --font-display: "Roboto", var(--font-sans);
+  
+  /* Google Chrome / Play Store Flat 2D Harmonious Colors */
+  --color-bg-light: #f1f3f4;
+  --color-bg-card-light: #ffffff;
+  --color-text-light: #202124;
+  --color-text-muted-light: #5f6368;
+  --color-border-light: #dadce0;
+  
+  --color-bg-dark: #202124;
+  --color-bg-card-dark: #292a2d;
+  --color-text-dark: #e8eaed;
+  --color-text-muted-dark: #9aa0a6;
+  --color-border-dark: #3c4043;
+
+  /* Google Colors map purple to Chrome Blue */
+  --color-brand-purple: #1a73e8; 
+  --color-brand-blue: #1a73e8;
+  --color-brand-green: #1e8e3e;
+  --color-brand-red: #d93025;
+  --color-brand-amber: #f9ab00;
+
+  /* Reset all rounded corners to Google Chrome flat 2D standards */
+  --radius-none: 0px;
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 4px;
+  --radius-lg: 8px;
+  --radius-xl: 8px;
+  --radius-2xl: 8px;
+  --radius-3xl: 8px;
+  --radius-full: 9999px;
+}
+
+/* Base custom resets */
+@layer base {
+  body {
+    transition: background-color 0.15s ease, color 0.15s ease;
+    @apply font-sans antialiased;
+    background-color: var(--color-bg-light);
+    color: var(--color-text-light);
+  }
+
+  .dark body {
+    background-color: var(--color-bg-dark);
+    color: var(--color-text-dark);
+  }
+
+  /* Standard classic scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-bg-light);
+  }
+  .dark ::-webkit-scrollbar-track {
+    background: var(--color-bg-dark);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 4px;
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: #555555;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+  }
+}
+
+/* 2D Flat UI utilities (Google style) */
+@layer utilities {
+  .card-shadow {
+    box-shadow: none !important;
+    border: 1px solid var(--color-border-light) !important;
+  }
+  
+  .dark .card-shadow {
+    box-shadow: none !important;
+    border: 1px solid var(--color-border-dark) !important;
+  }
+
+  .card-hover {
+    transition: background-color 0.1s ease !important;
+  }
+
+  .card-hover:hover {
+    transform: none !important;
+    box-shadow: none !important;
+    background-color: rgba(32, 33, 36, 0.04) !important;
+  }
+
+  .dark .card-hover:hover {
+    background-color: rgba(232, 234, 237, 0.04) !important;
+  }
+}
+
+/* Theme roots */
+:root {
+  background-color: var(--color-bg-light);
+  color: var(--color-text-light);
+}
+
+:root.dark {
+  background-color: var(--color-bg-dark);
+  color: var(--color-text-dark);
+}

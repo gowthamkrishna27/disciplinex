@@ -1,0 +1,7 @@
+node_modules/
+.env
+*.log
+.system_generated/
+*.db
+*.json-fallback
+data/fallback/

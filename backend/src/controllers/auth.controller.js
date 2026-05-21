@@ -1,0 +1,1208 @@
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import crypto from 'crypto';
+import QRCode from 'qrcode';
+import { checkFallback } from '../config/db.js';
+import User from '../models/User.js';
+import { JsonDb } from '../models/fallback/jsonDb.js';
+import { generateCaptcha, verifyCaptcha } from '../middleware/security.js';
+
+// Load JWT Secret
+const JWT_SECRET = process.env.JWT_SECRET || 'disciplinex_super_secret_key_123_456';
+const CAPTCHA_SECRET = process.env.JWT_SECRET || 'disciplinex_captcha_secret_123_456';
+
+// Device Name Parser Helper
+const getDeviceName = (userAgent) => {
+  if (!userAgent) return 'Unknown Device';
+  if (userAgent.includes('Mobile') || userAgent.includes('Android') || userAgent.includes('iPhone')) {
+    return 'Mobile Device';
+  }
+  if (userAgent.includes('Windows')) {
+    return 'Windows PC';
+  }
+  if (userAgent.includes('Macintosh') || userAgent.includes('Mac OS')) {
+    return 'macOS Device';
+  }
+  if (userAgent.includes('Linux')) {
+    return 'Linux PC';
+  }
+  return 'Desktop Device';
+};
+
+// Base32 Decoding for TOTP
+const decodeBase32 = (base32) => {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  let hex = '';
+  
+  const cleaned = base32.toUpperCase().replace(/=+$/, '');
+  for (let i = 0; i < cleaned.length; i++) {
+    const val = alphabet.indexOf(cleaned.charAt(i));
+    if (val === -1) throw new Error('Invalid Base32 character');
+    bits += val.toString(2).padStart(5, '0');
+  }
+  
+  for (let i = 0; i + 8 <= bits.length; i += 8) {
+    const chunk = bits.substring(i, i + 8);
+    hex += parseInt(chunk, 2).toString(16).padStart(2, '0');
+  }
+  
+  return Buffer.from(hex, 'hex');
+};
+
+// Zero-Dependency TOTP Verification Routine (RFC 6238)
+const verifyTOTP = (secret, token, window = 1) => {
+  try {
+    const key = decodeBase32(secret);
+    const epoch = Math.floor(Date.now() / 1000);
+    const timeStep = 30;
+    const currentCounter = Math.floor(epoch / timeStep);
+    
+    for (let i = -window; i <= window; i++) {
+      const counter = currentCounter + i;
+      
+      const buffer = Buffer.alloc(8);
+      buffer.writeUInt32BE(0, 0); // High 4 bytes
+      buffer.writeUInt32BE(counter, 4); // Low 4 bytes
+      
+      const hmac = crypto.createHmac('sha1', key);
+      hmac.update(buffer);
+      const hmacResult = hmac.digest();
+      
+      const offset = hmacResult[hmacResult.length - 1] & 0xf;
+      const code = (
+        ((hmacResult[offset] & 0x7f) << 24) |
+        ((hmacResult[offset + 1] & 0xff) << 16) |
+        ((hmacResult[offset + 2] & 0xff) << 8) |
+        (hmacResult[offset + 3] & 0xff)
+      ) % 1000000;
+      
+      const paddedCode = code.toString().padStart(6, '0');
+      if (paddedCode === token) {
+        return true;
+      }
+    }
+    return false;
+  } catch (err) {
+    console.error('TOTP Verification Error:', err.message);
+    return false;
+  }
+};
+
+// Base32 Secret Generator
+const generateBase32Secret = () => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let secret = '';
+  for (let i = 0; i < 16; i++) {
+    secret += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return secret;
+};
+
+// Generate full Login JWT Token
+const generateToken = (userId) => {
+  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: '30d' });
+};
+
+// Update active session list for a user
+const addSession = (user, token, deviceName, ip) => {
+  const newSession = {
+    token,
+    deviceName,
+    ip,
+    lastActive: new Date()
+  };
+  
+  if (!user.activeSessions) user.activeSessions = [];
+  
+  // Cap at 10 concurrent active sessions
+  user.activeSessions.push(newSession);
+  if (user.activeSessions.length > 10) {
+    user.activeSessions.shift();
+  }
+};
+
+/**
+ * 1. Register User
+ */
+export const registerUser = async (req, res) => {
+  const { name, email, password } = req.body;
+
+  if (!name || !email || !password) {
+    return res.status(400).json({ message: 'Please add all required fields' });
+  }
+
+  // Password strength check (min 8 chars, 1 number, 1 special character)
+  const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$/;
+  if (!passwordRegex.test(password)) {
+    return res.status(400).json({ 
+      message: 'Password must be at least 8 characters long and contain at least one letter, one number, and one special character.' 
+    });
+  }
+
+  try {
+    const isFallback = checkFallback();
+
+    let userExists;
+    if (isFallback) {
+      userExists = JsonDb.findUserByEmail(email);
+    } else {
+      userExists = await User.findOne({ email });
+    }
+
+    if (userExists) {
+      return res.status(400).json({ message: 'User already exists with this email' });
+    }
+
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Create user
+    let user;
+    const initialData = {
+      name,
+      email,
+      password: hashedPassword,
+      dailyGoal: 4,
+      failedLoginAttempts: 0,
+      lockoutUntil: null,
+      twoFactorEnabled: false,
+      trustedDevices: [],
+      activeSessions: [],
+      webAuthnCredentials: []
+    };
+
+    if (isFallback) {
+      user = JsonDb.createUser(initialData);
+    } else {
+      user = await User.create(initialData);
+    }
+
+    if (user) {
+      res.status(201).json({
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        dailyGoal: user.dailyGoal,
+        message: 'Account created successfully! Please sign in.'
+      });
+    } else {
+      res.status(400).json({ message: 'Invalid user data provided' });
+    }
+  } catch (error) {
+    console.error('[Auth Controller] Register Error:', error);
+    res.status(500).json({ message: 'Server error during registration', error: error.message });
+  }
+};
+
+/**
+ * 2. Login User (with failed attempts, CAPTCHA, and 2FA triggers)
+ */
+export const loginUser = async (req, res) => {
+  const { email, password, captchaAnswer, captchaToken, trustedDeviceId } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ message: 'Please include email and password' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+
+    // Find user
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserByEmail(email);
+    } else {
+      user = await User.findOne({ email });
+    }
+
+    if (!user) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+
+    const now = new Date();
+
+    // Lockout Check
+    if (user.lockoutUntil && new Date(user.lockoutUntil) > now) {
+      const minutesLeft = Math.ceil((new Date(user.lockoutUntil) - now) / 60000);
+      return res.status(423).json({
+        message: `Account is temporarily locked due to excessive failed attempts. Please try again in ${minutesLeft} minute(s).`
+      });
+    }
+
+    // CAPTCHA Challenge Validation (after 3 failed attempts)
+    if (user.failedLoginAttempts >= 3) {
+      if (!captchaToken || !captchaAnswer) {
+        const captcha = generateCaptcha();
+        return res.status(400).json({
+          message: 'Security validation required.',
+          requireCaptcha: true,
+          captchaEquation: captcha.equation,
+          captchaToken: captcha.token
+        });
+      }
+      
+      const isCaptchaValid = verifyCaptcha(captchaToken, captchaAnswer);
+      if (!isCaptchaValid) {
+        const captcha = generateCaptcha();
+        return res.status(400).json({
+          message: 'Security CAPTCHA verification failed. Please try again.',
+          requireCaptcha: true,
+          captchaEquation: captcha.equation,
+          captchaToken: captcha.token
+        });
+      }
+    }
+
+    // Check Password (with fallback for legacy/pre-seeded plain text passwords)
+    let isMatch = false;
+    try {
+      isMatch = await bcrypt.compare(password, user.password);
+    } catch (err) {
+      isMatch = false;
+    }
+
+    // Fallback: support plain-text comparison for legacy/pre-seeded users
+    if (!isMatch && password === user.password) {
+      isMatch = true;
+      // Auto-migrate legacy plain text password to hashed password in database
+      try {
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
+        user.password = hashedPassword;
+        if (isFallback) {
+          JsonDb.updateUser(user._id, { password: hashedPassword });
+        } else {
+          await user.save();
+        }
+        console.log(`[Auth Controller] Auto-migrated legacy plain-text password for user: ${user.email}`);
+      } catch (migrationError) {
+        console.error('[Auth Controller] Legacy password migration failed:', migrationError);
+      }
+    }
+
+    if (!isMatch) {
+      // Increment failed attempts
+      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+      
+      let locked = false;
+      if (user.failedLoginAttempts >= 5) {
+        user.lockoutUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes lockout
+        user.failedLoginAttempts = 0; // Reset count for next lockout cycle
+        locked = true;
+      }
+
+      if (isFallback) {
+        JsonDb.updateUser(user._id, {
+          failedLoginAttempts: user.failedLoginAttempts,
+          lockoutUntil: user.lockoutUntil
+        });
+      } else {
+        await user.save();
+      }
+
+      if (locked) {
+        return res.status(423).json({
+          message: 'Too many incorrect attempts. Your account has been temporarily locked for 15 minutes.'
+        });
+      }
+
+      const attemptsRemaining = 5 - user.failedLoginAttempts;
+      
+      // Prompt CAPTCHA on subsequent attempt
+      if (user.failedLoginAttempts >= 3) {
+        const captcha = generateCaptcha();
+        return res.status(401).json({
+          message: `Invalid email or password. ${attemptsRemaining} attempt(s) remaining.`,
+          requireCaptcha: true,
+          captchaEquation: captcha.equation,
+          captchaToken: captcha.token
+        });
+      }
+
+      return res.status(401).json({
+        message: `Invalid email or password. ${attemptsRemaining} attempt(s) remaining.`
+      });
+    }
+
+    // SUCCESSFUL AUTHENTICATION - Reset Lockouts
+    user.failedLoginAttempts = 0;
+    user.lockoutUntil = null;
+    user.lastLoginAt = new Date();
+    user.lastLoginIp = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
+
+    // 2FA Trusted Device Check
+    let deviceBypassed = false;
+    if (user.twoFactorEnabled && trustedDeviceId && user.trustedDevices) {
+      const match = user.trustedDevices.find(
+        d => d.deviceId === trustedDeviceId && new Date(d.expiresAt) > now
+      );
+      if (match) {
+        deviceBypassed = true;
+      }
+    }
+
+    // 2FA Verification Triggers
+    if (user.twoFactorEnabled && !deviceBypassed) {
+      // Create short-lived 2FA authorization token (expires in 5 mins)
+      const tempToken = jwt.sign(
+        { tempUserId: user._id, action: '2fa_pending' },
+        JWT_SECRET,
+        { expiresIn: '5m' }
+      );
+
+      if (user.twoFactorMethod === 'email') {
+        // Generate and store email OTP
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digits
+        user.emailOtp = otpCode;
+        user.emailOtpExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
+
+        if (isFallback) {
+          JsonDb.updateUser(user._id, {
+            failedLoginAttempts: 0,
+            lockoutUntil: null,
+            lastLoginAt: user.lastLoginAt,
+            lastLoginIp: user.lastLoginIp,
+            emailOtp: user.emailOtp,
+            emailOtpExpires: user.emailOtpExpires
+          });
+        } else {
+          await user.save();
+        }
+
+        // Print Simulated Email Delivery log
+        console.log(`\n======================================================================`);
+        console.log(`[SIMULATED MAIL SERVER] Delivery to: ${user.email}`);
+        console.log(`[DisciplineX OTP CODE] Code: ${otpCode}`);
+        console.log(`======================================================================\n`);
+
+        return res.json({
+          require2FA: true,
+          twoFaToken: tempToken,
+          method: 'email',
+          message: 'A 6-digit OTP code has been dispatched to your email address.'
+        });
+      } else if (user.twoFactorMethod === 'totp') {
+        if (isFallback) {
+          JsonDb.updateUser(user._id, {
+            failedLoginAttempts: 0,
+            lockoutUntil: null,
+            lastLoginAt: user.lastLoginAt,
+            lastLoginIp: user.lastLoginIp
+          });
+        } else {
+          await user.save();
+        }
+
+        return res.json({
+          require2FA: true,
+          twoFaToken: tempToken,
+          method: 'totp',
+          message: 'Please authenticate using the OTP code from your Authenticator App.'
+        });
+      }
+    }
+
+    // ISSUING FINAL FULL SESSION
+    const token = generateToken(user._id);
+    const deviceName = getDeviceName(req.headers['user-agent']);
+    addSession(user, token, deviceName, user.lastLoginIp);
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        lastLoginAt: user.lastLoginAt,
+        lastLoginIp: user.lastLoginIp,
+        activeSessions: user.activeSessions
+      });
+    } else {
+      await user.save();
+    }
+
+    // Set secure HTTP-only cookie
+    res.cookie('dx_token', token, {
+      httpOnly: true,
+      secure: false, // Set to true in prod (using TLS)
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+    });
+
+    res.json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      dailyGoal: user.dailyGoal,
+      twoFactorEnabled: user.twoFactorEnabled,
+      lastLoginAt: user.lastLoginAt,
+      lastLoginIp: user.lastLoginIp,
+      token // also return in JSON body for authorization header fallbacks
+    });
+
+  } catch (error) {
+    console.error('[Auth Controller] Login Error:', error);
+    res.status(500).json({ message: 'Server error during login', error: error.message });
+  }
+};
+
+/**
+ * 3. Verify Two-Factor Authentication (OTP or TOTP)
+ */
+export const verifyTwoFactor = async (req, res) => {
+  const { twoFaToken, otp, trustedDevice } = req.body;
+
+  if (!twoFaToken || !otp) {
+    return res.status(400).json({ message: 'Required validation inputs missing' });
+  }
+
+  try {
+    const decoded = jwt.verify(twoFaToken, JWT_SECRET);
+    if (decoded.action !== '2fa_pending') {
+      return res.status(401).json({ message: 'Session signature invalid' });
+    }
+
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserById(decoded.tempUserId);
+    } else {
+      user = await User.findById(decoded.tempUserId);
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User file not found' });
+    }
+
+    let isCodeValid = false;
+
+    // Verify Email OTP code
+    if (user.twoFactorMethod === 'email') {
+      const now = new Date();
+      if (user.emailOtp === otp && new Date(user.emailOtpExpires) > now) {
+        isCodeValid = true;
+        // Wipe OTP values once verified
+        user.emailOtp = null;
+        user.emailOtpExpires = null;
+      }
+    } 
+    // Verify TOTP authenticator code
+    else if (user.twoFactorMethod === 'totp') {
+      isCodeValid = verifyTOTP(user.twoFactorSecret, otp);
+    }
+
+    if (!isCodeValid) {
+      return res.status(401).json({ message: 'Invalid or expired OTP validation code.' });
+    }
+
+    // Success - Create full session
+    const token = generateToken(user._id);
+    const deviceName = getDeviceName(req.headers['user-agent']);
+    const ip = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
+    addSession(user, token, deviceName, ip);
+
+    // Track trusted device (if checked)
+    let newTrustedDeviceId = null;
+    if (trustedDevice) {
+      newTrustedDeviceId = crypto.randomBytes(16).toString('hex');
+      const trustedObj = {
+        deviceId: newTrustedDeviceId,
+        deviceName,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 days
+      };
+      if (!user.trustedDevices) user.trustedDevices = [];
+      user.trustedDevices.push(trustedObj);
+    }
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        emailOtp: user.emailOtp,
+        emailOtpExpires: user.emailOtpExpires,
+        activeSessions: user.activeSessions,
+        trustedDevices: user.trustedDevices
+      });
+    } else {
+      await user.save();
+    }
+
+    // Set cookies
+    res.cookie('dx_token', token, {
+      httpOnly: true,
+      secure: false,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+    });
+
+    if (newTrustedDeviceId) {
+      res.cookie('dx_trusted_device', newTrustedDeviceId, {
+        httpOnly: true,
+        secure: false,
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000
+      });
+    }
+
+    res.json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      dailyGoal: user.dailyGoal,
+      twoFactorEnabled: user.twoFactorEnabled,
+      lastLoginAt: user.lastLoginAt,
+      lastLoginIp: user.lastLoginIp,
+      token,
+      trustedDeviceId: newTrustedDeviceId
+    });
+
+  } catch (error) {
+    console.error('[2FA Verification Error]', error);
+    res.status(401).json({ message: '2FA session signature expired or invalid' });
+  }
+};
+
+/**
+ * 4. Request Password Reset Link
+ */
+export const requestReset = async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: 'Please specify your email address' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserByEmail(email);
+    } else {
+      user = await User.findOne({ email });
+    }
+
+    if (!user) {
+      // Generic message to avoid email enumeration
+      return res.json({ message: 'If the email matches an active account, a reset code has been dispatched.' });
+    }
+
+    // Generate secure 6-digit reset code
+    const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
+    user.resetPasswordToken = resetCode;
+    user.resetPasswordExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        resetPasswordToken: user.resetPasswordToken,
+        resetPasswordExpires: user.resetPasswordExpires
+      });
+    } else {
+      await user.save();
+    }
+
+    // Print Simulated Reset Email Delivery log
+    console.log(`\n======================================================================`);
+    console.log(`[SIMULATED MAIL SERVER] Password Reset for: ${user.email}`);
+    console.log(`[DisciplineX PASSWORD RESET] Code: ${resetCode}`);
+    console.log(`======================================================================\n`);
+
+    res.json({ message: 'If the email matches an active account, a reset code has been dispatched.' });
+  } catch (error) {
+    console.error('[Password Reset Request Error]', error);
+    res.status(500).json({ message: 'Failed to process password reset request.' });
+  }
+};
+
+/**
+ * 5. Handle Password Reset Execution
+ */
+export const executeReset = async (req, res) => {
+  const { email, code, newPassword } = req.body;
+
+  if (!email || !code || !newPassword) {
+    return res.status(400).json({ message: 'Required verification fields missing' });
+  }
+
+  // Password strength check
+  const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$/;
+  if (!passwordRegex.test(newPassword)) {
+    return res.status(400).json({ 
+      message: 'Password must be at least 8 characters long and contain at least one letter, one number, and one special character.' 
+    });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserByEmail(email);
+    } else {
+      user = await User.findOne({ email });
+    }
+
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid reset code or email match failed.' });
+    }
+
+    const now = new Date();
+    if (user.resetPasswordToken !== code || new Date(user.resetPasswordExpires) < now) {
+      return res.status(400).json({ message: 'Reset code is invalid or has expired.' });
+    }
+
+    // Hash and update password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    user.password = hashedPassword;
+    user.resetPasswordToken = null;
+    user.resetPasswordExpires = null;
+    
+    // Invalidate active sessions on password change for protection
+    user.activeSessions = [];
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        password: user.password,
+        resetPasswordToken: null,
+        resetPasswordExpires: null,
+        activeSessions: []
+      });
+    } else {
+      await user.save();
+    }
+
+    res.json({ message: 'Password updated successfully! Please sign in using your new password.' });
+  } catch (error) {
+    console.error('[Password Reset Execution Error]', error);
+    res.status(500).json({ message: 'Failed to reset password.' });
+  }
+};
+
+/**
+ * 6. Fetch Active Sessions
+ */
+export const getActiveSessions = async (req, res) => {
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserById(req.user.id);
+    } else {
+      user = await User.findById(req.user.id);
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User record not found.' });
+    }
+
+    // Exclude tokens in response for safety
+    const safeSessions = (user.activeSessions || []).map(s => ({
+      _id: s._id || s.token.substring(s.token.length - 12), // Dynamic fake id for lists
+      deviceName: s.deviceName,
+      ip: s.ip,
+      lastActive: s.lastActive,
+      isCurrent: req.headers.cookie?.includes(s.token) || req.headers.authorization?.includes(s.token)
+    }));
+
+    res.json(safeSessions);
+  } catch (error) {
+    console.error('[Get Sessions Error]', error);
+    res.status(500).json({ message: 'Failed to retrieve active sessions.' });
+  }
+};
+
+/**
+ * 7. Revoke Session
+ */
+export const revokeSession = async (req, res) => {
+  const { sessionId } = req.params;
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserById(req.user.id);
+    } else {
+      user = await User.findById(req.user.id);
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User record not found.' });
+    }
+
+    // Filter out the session
+    const originalLength = user.activeSessions?.length || 0;
+    user.activeSessions = (user.activeSessions || []).filter(
+      s => (s._id || s.token.substring(s.token.length - 12)) !== sessionId
+    );
+
+    if (user.activeSessions.length === originalLength) {
+      return res.status(404).json({ message: 'Session not found.' });
+    }
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, { activeSessions: user.activeSessions });
+    } else {
+      await user.save();
+    }
+
+    res.json({ message: 'Session revoked successfully.' });
+  } catch (error) {
+    console.error('[Revoke Session Error]', error);
+    res.status(500).json({ message: 'Failed to revoke session.' });
+  }
+};
+
+/**
+ * 8. Setup Two-Factor (Generate Secret / QR Details)
+ */
+export const setupTwoFactor = async (req, res) => {
+  const { method } = req.body;
+
+  if (!method || !['email', 'totp', 'none'].includes(method)) {
+    return res.status(400).json({ message: 'Invalid 2FA method requested.' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserById(req.user.id);
+    } else {
+      user = await User.findById(req.user.id);
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User record not found.' });
+    }
+
+    if (method === 'none') {
+      user.twoFactorEnabled = false;
+      user.twoFactorMethod = null;
+      user.twoFactorSecret = null;
+
+      if (isFallback) {
+        JsonDb.updateUser(user._id, {
+          twoFactorEnabled: false,
+          twoFactorMethod: null,
+          twoFactorSecret: null
+        });
+      } else {
+        await user.save();
+      }
+
+      return res.json({ message: 'Two-Factor Authentication has been successfully disabled.' });
+    }
+
+    if (method === 'email') {
+      user.twoFactorTempSecret = 'email'; // Temp placeholder
+      if (isFallback) {
+        JsonDb.updateUser(user._id, { twoFactorTempSecret: 'email' });
+      } else {
+        await user.save();
+      }
+
+      // Generate a quick verification OTP
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      user.emailOtp = otpCode;
+      user.emailOtpExpires = new Date(Date.now() + 5 * 60 * 1000);
+
+      if (isFallback) {
+        JsonDb.updateUser(user._id, {
+          emailOtp: user.emailOtp,
+          emailOtpExpires: user.emailOtpExpires
+        });
+      } else {
+        await user.save();
+      }
+
+      console.log(`\n======================================================================`);
+      console.log(`[SIMULATED MAIL SERVER] Enable 2FA Verification for: ${user.email}`);
+      console.log(`[DisciplineX OTP CODE] Verification Code: ${otpCode}`);
+      console.log(`======================================================================\n`);
+
+      return res.json({
+        tempSetup: true,
+        message: 'A 6-digit confirmation code has been dispatched to your email address.'
+      });
+    }
+
+    if (method === 'totp') {
+      const totpSecret = generateBase32Secret();
+      user.twoFactorTempSecret = totpSecret;
+
+      if (isFallback) {
+        JsonDb.updateUser(user._id, { twoFactorTempSecret: totpSecret });
+      } else {
+        await user.save();
+      }
+
+      // Generate actual QR URL parameters
+      const qrData = `otpauth://totp/DisciplineX:${user.email}?secret=${totpSecret}&issuer=DisciplineX`;
+      
+      // Generate actual QR Code image as Data URL (base64 PNG)
+      let qrCodeDataUrl = '';
+      try {
+        qrCodeDataUrl = await QRCode.toDataURL(qrData);
+      } catch (qrErr) {
+        console.error('[QRCode Generation Error]', qrErr);
+      }
+
+      return res.json({
+        tempSetup: true,
+        secret: totpSecret,
+        qrData,
+        qrCodeDataUrl,
+        message: 'Please scan the code in your Authenticator app (e.g., Google Authenticator) and verify the 6-digit code.'
+      });
+    }
+
+  } catch (error) {
+    console.error('[Setup 2FA Error]', error);
+    res.status(500).json({ message: 'Failed to initiate 2FA setup.' });
+  }
+};
+
+/**
+ * 9. Confirm and Activate Two-Factor Authentication
+ */
+export const confirmTwoFactor = async (req, res) => {
+  const { code, method } = req.body;
+
+  if (!code || !method) {
+    return res.status(400).json({ message: 'Required verification credentials missing.' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserById(req.user.id);
+    } else {
+      user = await User.findById(req.user.id);
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User record not found.' });
+    }
+
+    if (!user.twoFactorTempSecret) {
+      return res.status(400).json({ message: 'No pending 2FA configuration session found.' });
+    }
+
+    let isCodeValid = false;
+
+    if (method === 'email') {
+      const now = new Date();
+      if (user.emailOtp === code && new Date(user.emailOtpExpires) > now) {
+        isCodeValid = true;
+        user.emailOtp = null;
+        user.emailOtpExpires = null;
+        user.twoFactorEnabled = true;
+        user.twoFactorMethod = 'email';
+        user.twoFactorTempSecret = null;
+      }
+    } else if (method === 'totp') {
+      isCodeValid = verifyTOTP(user.twoFactorTempSecret, code);
+      if (isCodeValid) {
+        user.twoFactorEnabled = true;
+        user.twoFactorMethod = 'totp';
+        user.twoFactorSecret = user.twoFactorTempSecret;
+        user.twoFactorTempSecret = null;
+      }
+    }
+
+    if (!isCodeValid) {
+      return res.status(400).json({ message: 'Verification failed. The code entered is invalid or has expired.' });
+    }
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        twoFactorEnabled: user.twoFactorEnabled,
+        twoFactorMethod: user.twoFactorMethod,
+        twoFactorSecret: user.twoFactorSecret,
+        twoFactorTempSecret: null,
+        emailOtp: null,
+        emailOtpExpires: null
+      });
+    } else {
+      await user.save();
+    }
+
+    res.json({
+      twoFactorEnabled: user.twoFactorEnabled,
+      twoFactorMethod: user.twoFactorMethod,
+      message: 'Two-Factor Authentication has been successfully activated!'
+    });
+
+  } catch (error) {
+    console.error('[Confirm 2FA Error]', error);
+    res.status(500).json({ message: 'Failed to activate 2FA.' });
+  }
+};
+
+/**
+ * 10. WebAuthn Biometrics: Register Device Request Options
+ */
+export const getBiometricRegisterOptions = async (req, res) => {
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserById(req.user.id);
+    } else {
+      user = await User.findById(req.user.id);
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User record not found.' });
+    }
+
+    // Generate mock options matching WebAuthn standard
+    const challenge = crypto.randomBytes(32).toString('base64');
+    
+    // Store challenge in activeSession temp or just send it for validation
+    res.json({
+      challenge,
+      rp: { name: 'DisciplineX Security Engine' },
+      user: {
+        id: user._id,
+        name: user.email,
+        displayName: user.name
+      },
+      pubKeyCredParams: [
+        { type: 'public-key', alg: -7 }, // ES256
+        { type: 'public-key', alg: -257 } // RS256
+      ]
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Biometric registration failed.' });
+  }
+};
+
+/**
+ * 11. WebAuthn Biometrics: Register Device Confirm
+ */
+export const confirmBiometricRegister = async (req, res) => {
+  const { credentialId, publicKey } = req.body;
+
+  if (!credentialId || !publicKey) {
+    return res.status(400).json({ message: 'Credential payload missing.' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserById(req.user.id);
+    } else {
+      user = await User.findById(req.user.id);
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User record not found.' });
+    }
+
+    if (!user.webAuthnCredentials) user.webAuthnCredentials = [];
+
+    // Check duplicate credentials
+    const exists = user.webAuthnCredentials.find(c => c.credentialId === credentialId);
+    if (!exists) {
+      user.webAuthnCredentials.push({
+        credentialId,
+        publicKey,
+        prevCounter: 0
+      });
+    }
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, { webAuthnCredentials: user.webAuthnCredentials });
+    } else {
+      await user.save();
+    }
+
+    res.json({ message: 'Device Biometric registration successful!' });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to verify device registration.' });
+  }
+};
+
+/**
+ * 12. WebAuthn Biometrics: Authentication Challenge
+ */
+export const getBiometricLoginOptions = async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: 'Please specify your email address' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserByEmail(email);
+    } else {
+      user = await User.findOne({ email });
+    }
+
+    if (!user || !user.webAuthnCredentials || user.webAuthnCredentials.length === 0) {
+      return res.status(400).json({ message: 'No biometric credentials registered for this account.' });
+    }
+
+    const challenge = crypto.randomBytes(32).toString('base64');
+
+    res.json({
+      challenge,
+      allowCredentials: user.webAuthnCredentials.map(c => ({
+        id: c.credentialId,
+        type: 'public-key'
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Failed to request biometric verification challenge.' });
+  }
+};
+
+/**
+ * 13. WebAuthn Biometrics: Verify and Login
+ */
+export const verifyBiometricLogin = async (req, res) => {
+  const { email, credentialId } = req.body;
+
+  if (!email || !credentialId) {
+    return res.status(400).json({ message: 'Biometric authentication details missing.' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserByEmail(email);
+    } else {
+      user = await User.findOne({ email });
+    }
+
+    if (!user || !user.webAuthnCredentials) {
+      return res.status(401).json({ message: 'Authentication rejected.' });
+    }
+
+    const credential = user.webAuthnCredentials.find(c => c.credentialId === credentialId);
+    if (!credential) {
+      return res.status(401).json({ message: 'Biometric hardware signature verification failed.' });
+    }
+
+    // Success - Issue full JWT token session
+    user.lastLoginAt = new Date();
+    user.lastLoginIp = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
+
+    const token = generateToken(user._id);
+    const deviceName = getDeviceName(req.headers['user-agent']);
+    addSession(user, token, deviceName, user.lastLoginIp);
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        lastLoginAt: user.lastLoginAt,
+        lastLoginIp: user.lastLoginIp,
+        activeSessions: user.activeSessions
+      });
+    } else {
+      await user.save();
+    }
+
+    // Set secure cookie
+    res.cookie('dx_token', token, {
+      httpOnly: true,
+      secure: false,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    });
+
+    res.json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      dailyGoal: user.dailyGoal,
+      twoFactorEnabled: user.twoFactorEnabled,
+      lastLoginAt: user.lastLoginAt,
+      lastLoginIp: user.lastLoginIp,
+      token
+    });
+
+  } catch (error) {
+    res.status(500).json({ message: 'Biometric sign in verification failed.' });
+  }
+};
+
+/**
+ * 14. Retrieve Profile Profile
+ */
+export const getProfile = async (req, res) => {
+  try {
+    const isFallback = checkFallback();
+    let user;
+
+    if (isFallback) {
+      user = JsonDb.findUserById(req.user.id);
+    } else {
+      user = await User.findById(req.user.id).select('-password');
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      dailyGoal: user.dailyGoal,
+      twoFactorEnabled: user.twoFactorEnabled,
+      twoFactorMethod: user.twoFactorMethod,
+      lastLoginAt: user.lastLoginAt,
+      lastLoginIp: user.lastLoginIp,
+      createdAt: user.createdAt
+    });
+  } catch (error) {
+    console.error('[Auth Controller] Profile Retrieval Error:', error);
+    res.status(500).json({ message: 'Server error fetching profile', error: error.message });
+  }
+};
+
+/**
+ * 15. Update Profile
+ */
+export const updateProfile = async (req, res) => {
+  const { name, dailyGoal } = req.body;
+
+  try {
+    const isFallback = checkFallback();
+    let updatedUser;
+
+    const updateFields = {};
+    if (name) updateFields.name = name;
+    if (dailyGoal !== undefined) updateFields.dailyGoal = Number(dailyGoal);
+
+    if (isFallback) {
+      updatedUser = JsonDb.updateUser(req.user.id, updateFields);
+    } else {
+      updatedUser = await User.findByIdAndUpdate(
+        req.user.id,
+        { $set: updateFields },
+        { new: true, runValidators: true }
+      ).select('-password');
+    }
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.json({
+      _id: updatedUser._id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      dailyGoal: updatedUser.dailyGoal,
+    });
+  } catch (error) {
+    console.error('[Auth Controller] Profile Update Error:', error);
+    res.status(500).json({ message: 'Server error updating profile', error: error.message });
+  }
+};

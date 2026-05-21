@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Brand Monogram 'D' shape in Google Blue -->
+  <path d="M25 25H50C62 25 70 32 70 45C70 58 62 65 50 65H25V25Z" stroke="#1a73e8" stroke-width="10" stroke-linejoin="round" />
+  <!-- Brand Monogram 'X' slash in Premium Purple -->
+  <path d="M70 25L35 65" stroke="#a855f7" stroke-width="12" stroke-linecap="round" />
+</svg>
