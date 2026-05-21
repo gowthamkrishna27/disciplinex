@@ -1,6 +1,6 @@
-const API_BASE = import.meta.env.DEV 
-  ? 'http://localhost:5000/api' 
-  : (import.meta.env.VITE_API_URL || 'https://disciplinex-laxc.onrender.com/api');
+const API_BASE = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
+  ? 'http://localhost:5000/api'
+  : 'https://disciplinex-laxc.onrender.com/api';
 
 const request = async (endpoint, options = {}) => {
   const token = localStorage.getItem('token');
