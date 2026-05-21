@@ -12,10 +12,24 @@ const app = express();
 // Security Middlewares Imports
 import { sanitizeRequest, ipRateLimiter } from './middleware/security.js';
 
-// Middlewares
+// Define permitted origins
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'https://disciplinex-tau.vercel.app'
+];
+
 app.use(cors({
-  origin: true, // Dynamic origin matching for cross-origin credentials
-  credentials: true // Crucial for receiving httpOnly cookies
+  origin: (origin, callback) => {
+    // Allow server-to-server or local REST client requests (no origin header)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+      callback(null, true);
+    } else {
+      callback(new Error('Blocked by CORS policy: Origin not allowed.'));
+    }
+  },
+  credentials: true
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));

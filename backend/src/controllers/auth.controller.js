@@ -10,6 +10,7 @@ import { generateCaptcha, verifyCaptcha } from '../middleware/security.js';
 // Load JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET || 'disciplinex_super_secret_key_123_456';
 const CAPTCHA_SECRET = process.env.JWT_SECRET || 'disciplinex_captcha_secret_123_456';
+const isProd = process.env.NODE_ENV === 'production';
 
 // Device Name Parser Helper
 const getDeviceName = (userAgent) => {
@@ -424,8 +425,8 @@ export const loginUser = async (req, res) => {
     // Set secure HTTP-only cookie
     res.cookie('dx_token', token, {
       httpOnly: true,
-      secure: false, // Set to true in prod (using TLS)
-      sameSite: 'lax',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
     });
 
@@ -528,16 +529,16 @@ export const verifyTwoFactor = async (req, res) => {
     // Set cookies
     res.cookie('dx_token', token, {
       httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
     });
 
     if (newTrustedDeviceId) {
       res.cookie('dx_trusted_device', newTrustedDeviceId, {
         httpOnly: true,
-        secure: false,
-        sameSite: 'lax',
+        secure: isProd,
+        sameSite: isProd ? 'none' : 'lax',
         maxAge: 30 * 24 * 60 * 60 * 1000
       });
     }
@@ -1111,8 +1112,8 @@ export const verifyBiometricLogin = async (req, res) => {
     // Set secure cookie
     res.cookie('dx_token', token, {
       httpOnly: true,
-      secure: false,
-      sameSite: 'lax',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
       maxAge: 30 * 24 * 60 * 60 * 1000
     });
 
