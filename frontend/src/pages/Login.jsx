@@ -85,6 +85,10 @@ export const Login = () => {
     setResetPasswordStrength(evaluateStrength(newPassword));
   }, [newPassword]);
 
+  useEffect(() => {
+    document.title = 'Sign In — DisciplineX';
+  }, []);
+
   // Handle standard login / signup submit
   const handleSubmit = async (e) => {
     e.preventDefault();

@@ -1,11 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-import AddSchedule from './pages/AddSchedule';
-import Analytics from './pages/Analytics';
-import Settings from './pages/Settings';
-import AICoach from './pages/AICoach';
+
+// Lazy load large page modules to optimize initial bundle size
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const AddSchedule = lazy(() => import('./pages/AddSchedule'));
+const Analytics = lazy(() => import('./pages/Analytics'));
+const Settings = lazy(() => import('./pages/Settings'));
+const AICoach = lazy(() => import('./pages/AICoach'));
 import { 
   CalendarRange, 
   LayoutDashboard, 
@@ -21,6 +23,17 @@ import {
 const Layout = () => {
   const { user, logout, isDark, toggleTheme } = useAuth();
   const [activePage, setActivePage] = useState('dashboard');
+
+  useEffect(() => {
+    const titles = {
+      dashboard: 'Dashboard — DisciplineX',
+      planner: 'Routine Designer — DisciplineX',
+      analytics: 'Analytics Insights — DisciplineX',
+      'ai-coach': 'AI Productivity Coach — DisciplineX',
+      settings: 'Account Settings — DisciplineX'
+    };
+    document.title = titles[activePage] || 'DisciplineX — Routine Planner & AI Productivity Coach';
+  }, [activePage]);
 
   const renderActivePage = () => {
     switch (activePage) {
@@ -155,7 +168,14 @@ const Layout = () => {
 
       {/* Main Pages Content viewport */}
       <main className="flex-grow pb-16">
-        {renderActivePage()}
+        <Suspense fallback={
+          <div className="flex flex-col justify-center items-center h-96">
+            <div className="w-8 h-8 border-2 border-brand-purple border-t-transparent rounded-full animate-spin mb-4"></div>
+            <p className="text-xs font-semibold text-zinc-400">Loading module analytics...</p>
+          </div>
+        }>
+          {renderActivePage()}
+        </Suspense>
       </main>
 
       {/* Mobile Sticky Tab bar */}

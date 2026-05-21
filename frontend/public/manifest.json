@@ -1,0 +1,16 @@
+{
+  "short_name": "DisciplineX",
+  "name": "DisciplineX Daily Routine Planner",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#121214",
+  "theme_color": "#121214",
+  "display": "standalone",
+  "orientation": "portrait"
+}
