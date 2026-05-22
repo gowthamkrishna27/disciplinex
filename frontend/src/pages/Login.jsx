@@ -51,6 +51,7 @@ export const Login = () => {
   const [formError, setFormError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [loadingState, setLoadingState] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState('');
 
   const renderMessageWithLinks = (text) => {
     if (!text) return null;
@@ -119,6 +120,39 @@ export const Login = () => {
     }
   }, []);
 
+  // Safety-net: forcefully reset loading state after 100 seconds to prevent permanent freeze
+  // (Render free-tier cold starts can take 50-90 seconds)
+  useEffect(() => {
+    if (!loadingState) return;
+
+    // Dynamic loading message: show server cold-start notice after 5 seconds
+    const initialMessages = {
+      'signup': 'Creating Workspace...',
+      'login': 'Verifying Credentials...',
+      '2fa': 'Validating Token...',
+      'forgot-password': 'Dispatching OTP Code...',
+      'reset-password': 'Updating Credentials...'
+    };
+    setLoadingMessage(initialMessages[view] || 'Processing...');
+    const slowTimer = setTimeout(() => {
+      setLoadingMessage('Server is waking up, please wait...');
+    }, 5000);
+    const slowerTimer = setTimeout(() => {
+      setLoadingMessage('Almost there — cold start taking a bit longer...');
+    }, 30000);
+
+    const safetyTimer = setTimeout(() => {
+      console.error('[Login Safety Net] Loading state was stuck for 100 seconds. Force-resetting.');
+      setLoadingState(false);
+      setFormError('The request took too long. The server may be starting up — please wait a moment and try again.');
+    }, 100000);
+    return () => {
+      clearTimeout(slowTimer);
+      clearTimeout(slowerTimer);
+      clearTimeout(safetyTimer);
+    };
+  }, [loadingState]);
+
   // Handle standard login / signup submit
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -142,16 +176,20 @@ export const Login = () => {
         return;
       }
 
+      console.log('[Login] Starting signup request...');
       setLoadingState(true);
       try {
         const resData = await signup(name, email, password);
+        console.log('[Login] Signup response received:', resData);
         setSuccessMessage(resData?.message || 'Account created successfully! Please check your email.');
         setView('login');
         setPassword('');
         setName('');
       } catch (err) {
+        console.error('[Login] Signup error:', err.message);
         setFormError(err.message || 'Registration failed.');
       } finally {
+        console.log('[Login] Signup finally block - resetting loading state.');
         setLoadingState(false);
       }
     } 
@@ -169,6 +207,7 @@ export const Login = () => {
         return;
       }
 
+      console.log('[Login] Starting login request...');
       setLoadingState(true);
       try {
         // Retrieve trusted device cookie ID if exists
@@ -177,9 +216,12 @@ export const Login = () => {
           .find(row => row.startsWith('dx_trusted_device='))
           ?.split('=')[1] || null;
 
+        console.log('[Login] Calling AuthContext login...');
         const data = await login(email, password, captchaAnswer, captchaToken, cookieId);
+        console.log('[Login] Login response received:', JSON.stringify(data).substring(0, 200));
         
         if (data && data.require2FA) {
+          console.log('[Login] 2FA required, switching view.');
           setTwoFaToken(data.twoFaToken);
           setTwoFaMethod(data.method);
           setSuccessMessage(data.message);
@@ -187,6 +229,7 @@ export const Login = () => {
           setOtp('');
         }
       } catch (err) {
+        console.error('[Login] Login error:', err.message);
         setFormError(err.message || 'Authentication failed.');
         
         // Check if CAPTCHA challenge is requested
@@ -197,6 +240,7 @@ export const Login = () => {
           setCaptchaAnswer('');
         }
       } finally {
+        console.log('[Login] Login finally block - resetting loading state.');
         setLoadingState(false);
       }
     }
@@ -455,7 +499,7 @@ export const Login = () => {
                 disabled={loadingState}
                 className="w-full mt-6 py-2.5 bg-brand-purple hover:bg-brand-purple/90 disabled:bg-brand-purple/50 text-white rounded-xl text-sm font-medium transition cursor-pointer select-none card-shadow flex items-center justify-center gap-2"
               >
-                {loadingState ? 'Verifying Credentials...' : 'Sign In securely'}
+                {loadingState ? loadingMessage : 'Sign In securely'}
               </button>
             </form>
 
@@ -591,7 +635,7 @@ export const Login = () => {
                 disabled={loadingState}
                 className="w-full mt-6 py-2.5 bg-brand-purple hover:bg-brand-purple/90 disabled:bg-brand-purple/50 text-white rounded-xl text-sm font-semibold transition cursor-pointer select-none card-shadow"
               >
-                {loadingState ? 'Creating Workspace...' : 'Create Account'}
+                {loadingState ? loadingMessage : 'Create Account'}
               </button>
             </form>
 
@@ -665,7 +709,7 @@ export const Login = () => {
                 disabled={loadingState}
                 className="w-full mt-2 py-2.5 bg-brand-purple hover:bg-brand-purple/90 disabled:bg-brand-purple/50 text-white rounded-xl text-sm font-semibold transition cursor-pointer select-none card-shadow"
               >
-                {loadingState ? 'Validating Token...' : 'Verify & Launch Workspace'}
+                {loadingState ? loadingMessage : 'Verify & Launch Workspace'}
               </button>
             </form>
 
@@ -724,7 +768,7 @@ export const Login = () => {
                 disabled={loadingState}
                 className="w-full mt-4 py-2.5 bg-brand-purple hover:bg-brand-purple/90 disabled:bg-brand-purple/50 text-white rounded-xl text-sm font-semibold transition cursor-pointer select-none card-shadow"
               >
-                {loadingState ? 'Dispatching OTP Code...' : 'Request Reset Code'}
+                {loadingState ? loadingMessage : 'Request Reset Code'}
               </button>
             </form>
 
@@ -834,7 +878,7 @@ export const Login = () => {
                 disabled={loadingState}
                 className="w-full mt-4 py-2.5 bg-brand-purple hover:bg-brand-purple/90 disabled:bg-brand-purple/50 text-white rounded-xl text-sm font-semibold transition cursor-pointer select-none card-shadow"
               >
-                {loadingState ? 'Updating Credentials...' : 'Save & Sign In'}
+                {loadingState ? loadingMessage : 'Save & Sign In'}
               </button>
             </form>
 

@@ -15,6 +15,12 @@ const getApiBase = () => {
 
 const API_BASE = getApiBase();
 
+// Production Render free-tier can take 50-90s to cold-start; local should be fast
+const isLocalApi = API_BASE.includes('localhost') || API_BASE.includes('127.0.0.1') || API_BASE.includes('192.168.');
+const REQUEST_TIMEOUT = isLocalApi ? 15000 : 90000; // 15s local, 90s production
+
+console.log(`[API Service] Initialized. Target: ${API_BASE} | Timeout: ${REQUEST_TIMEOUT / 1000}s`);
+
 const request = async (endpoint, options = {}) => {
   const token = localStorage.getItem('token');
   const headers = {
@@ -26,12 +32,12 @@ const request = async (endpoint, options = {}) => {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  // Set up 15-second AbortController timeout
+  // Set up AbortController timeout (dynamic based on local vs production)
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
-    console.warn(`[API Service] Request to ${endpoint} timed out after 15s. Aborting.`);
+    console.warn(`[API Service] Request to ${endpoint} timed out after ${REQUEST_TIMEOUT / 1000}s. Aborting.`);
     controller.abort();
-  }, 15000);
+  }, REQUEST_TIMEOUT);
 
   const config = {
     ...options,
