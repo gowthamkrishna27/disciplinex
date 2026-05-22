@@ -267,6 +267,18 @@ export const loginUser = async (req, res) => {
 
     // Email verification status check (block if explicitly false, skip if undefined for pre-seeded legacy test accounts)
     if (user.isVerified === false) {
+      if (user.emailVerificationExpires && new Date(user.emailVerificationExpires).getTime() < now.getTime()) {
+        // Delete expired unverified details
+        if (isFallback) {
+          JsonDb.deleteUser(user._id);
+        } else {
+          await User.deleteOne({ _id: user._id });
+        }
+        return res.status(401).json({
+          message: 'Your email verification window (5 minutes) has expired and your details were removed. Please register again.'
+        });
+      }
+
       return res.status(403).json({
         message: 'Your email address has not been verified yet. Please check your email inbox (and spam folder) for the verification link.',
         notVerified: true
@@ -1364,6 +1376,13 @@ export const verifyEmail = async (req, res) => {
     // Check expiration
     const now = new Date();
     if (user.emailVerificationExpires && new Date(user.emailVerificationExpires).getTime() < now.getTime()) {
+      // Delete unverified user details from database since verification expired
+      if (isFallback) {
+        JsonDb.deleteUser(user._id);
+      } else {
+        await User.deleteOne({ _id: user._id });
+      }
+
       return res.status(400).send(`
         <html>
           <head>

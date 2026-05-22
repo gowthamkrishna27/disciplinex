@@ -94,6 +94,14 @@ export const JsonDb = {
     return users[index];
   },
 
+  deleteUser: (id) => {
+    const users = readData('users');
+    const filtered = users.filter(u => u._id !== id);
+    if (users.length === filtered.length) return false;
+    writeData('users', filtered);
+    return true;
+  },
+
   // Schedules (Tasks) CRUD
   findTasksByUserAndDate: (userId, date) => {
     const tasks = readData('tasks');
