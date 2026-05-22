@@ -215,8 +215,14 @@ export const Login = () => {
     setFormError('');
     setSuccessMessage('');
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
     if (!resetEmail) {
       setFormError('Please provide your email address.');
+      return;
+    }
+    if (!emailRegex.test(resetEmail)) {
+      setFormError('Please enter a valid email address.');
       return;
     }
 

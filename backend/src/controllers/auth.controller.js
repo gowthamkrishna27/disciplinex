@@ -213,6 +213,12 @@ export const loginUser = async (req, res) => {
     return res.status(400).json({ message: 'Please include email and password' });
   }
 
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+
   try {
     const isFallback = checkFallback();
 
@@ -575,6 +581,12 @@ export const requestReset = async (req, res) => {
 
   if (!email) {
     return res.status(400).json({ message: 'Please specify your email address' });
+  }
+
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
   }
 
   try {
@@ -1042,6 +1054,12 @@ export const getBiometricLoginOptions = async (req, res) => {
     return res.status(400).json({ message: 'Please specify your email address' });
   }
 
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+
   try {
     const isFallback = checkFallback();
     let user;
@@ -1077,6 +1095,12 @@ export const verifyBiometricLogin = async (req, res) => {
 
   if (!email || !credentialId) {
     return res.status(400).json({ message: 'Biometric authentication details missing.' });
+  }
+
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
   }
 
   try {

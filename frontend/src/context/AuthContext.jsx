@@ -254,6 +254,14 @@ export const AuthProvider = ({ children }) => {
       throw new Error('Please specify email address');
     }
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setBiometricStatus('failed');
+      setBiometricMessage('Please enter a valid email address.');
+      setTimeout(() => setBiometricStatus('idle'), 2500);
+      throw new Error('Please enter a valid email address.');
+    }
+
     try {
       const options = await api.post('/auth/webauthn/login-options', { email });
       
