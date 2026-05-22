@@ -52,6 +52,28 @@ export const Login = () => {
   const [successMessage, setSuccessMessage] = useState('');
   const [loadingState, setLoadingState] = useState(false);
 
+  const renderMessageWithLinks = (text) => {
+    if (!text) return null;
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(urlRegex);
+    return parts.map((part, i) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={i}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline hover:opacity-80 transition break-all font-semibold ml-1"
+          >
+            {part}
+          </a>
+        );
+      }
+      return part;
+    });
+  };
+
   const { 
     login, 
     signup, 
@@ -87,6 +109,14 @@ export const Login = () => {
 
   useEffect(() => {
     document.title = 'Sign In — DisciplineX';
+
+    // Parse query params to detect email verification success
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('verified') === 'true') {
+      setSuccessMessage('Email address verified successfully! You can now sign in.');
+      // Clean up URL query parameter without reloading page
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
   }, []);
 
   // Handle standard login / signup submit
@@ -114,8 +144,8 @@ export const Login = () => {
 
       setLoadingState(true);
       try {
-        await signup(name, email, password);
-        setSuccessMessage('Account created successfully! Please sign in.');
+        const resData = await signup(name, email, password);
+        setSuccessMessage(resData?.message || 'Account created successfully! Please check your email.');
         setView('login');
         setPassword('');
         setName('');
@@ -295,14 +325,14 @@ export const Login = () => {
         {formError && (
           <div className="mb-6 p-4 rounded-xl bg-brand-red/5 border border-brand-red/20 text-brand-red text-xs font-medium text-center flex items-center justify-center gap-1.5">
             <ShieldAlert className="w-4 h-4 flex-shrink-0" />
-            <span>{formError}</span>
+            <span>{renderMessageWithLinks(formError)}</span>
           </div>
         )}
 
         {successMessage && (
           <div className="mb-6 p-4 rounded-xl bg-brand-green/5 border border-brand-green/20 text-brand-green text-xs font-semibold text-center flex items-center justify-center gap-1.5">
             <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-            <span>{successMessage}</span>
+            <span>{renderMessageWithLinks(successMessage)}</span>
           </div>
         )}
 

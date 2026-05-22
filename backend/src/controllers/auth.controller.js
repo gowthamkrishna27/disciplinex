@@ -6,6 +6,7 @@ import { checkFallback } from '../config/db.js';
 import User from '../models/User.js';
 import { JsonDb } from '../models/fallback/jsonDb.js';
 import { generateCaptcha, verifyCaptcha } from '../middleware/security.js';
+import { sendVerificationEmail, sendOtpEmail, sendResetCodeEmail } from '../utils/email.js';
 
 // Load JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET || 'disciplinex_super_secret_key_123_456';
@@ -79,7 +80,7 @@ const verifyTOTP = (secret, token, window = 1) => {
       ) % 1000000;
       
       const paddedCode = code.toString().padStart(6, '0');
-      if (paddedCode === token) {
+      if (paddedCode === String(token)) {
         return true;
       }
     }
@@ -165,6 +166,10 @@ export const registerUser = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
+    // Generate verification token (expires in 24 hours)
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
     // Create user
     let user;
     const initialData = {
@@ -177,7 +182,10 @@ export const registerUser = async (req, res) => {
       twoFactorEnabled: false,
       trustedDevices: [],
       activeSessions: [],
-      webAuthnCredentials: []
+      webAuthnCredentials: [],
+      isVerified: false,
+      emailVerificationToken: verificationToken,
+      emailVerificationExpires: verificationExpires
     };
 
     if (isFallback) {
@@ -187,12 +195,25 @@ export const registerUser = async (req, res) => {
     }
 
     if (user) {
+      // Build verification URL dynamically based on request host and protocol
+      const host = req.get('host');
+      const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+      const verifyUrl = `${protocol}://${host}/api/auth/verify-email?token=${verificationToken}`;
+
+      // Dispatch real or Ethereal email
+      const emailResult = await sendVerificationEmail(user.email, verifyUrl);
+
+      let message = 'Account created! A verification link has been dispatched to your email address. Please check your email to verify your account.';
+      if (emailResult && emailResult.previewUrl) {
+        message = `Account created! A verification link has been sent to Ethereal Mail. Please check your simulated mailbox here: ${emailResult.previewUrl}`;
+      }
+
       res.status(201).json({
         _id: user._id,
         name: user.name,
         email: user.email,
         dailyGoal: user.dailyGoal,
-        message: 'Account created successfully! Please sign in.'
+        message
       });
     } else {
       res.status(400).json({ message: 'Invalid user data provided' });
@@ -241,6 +262,14 @@ export const loginUser = async (req, res) => {
       const minutesLeft = Math.ceil((new Date(user.lockoutUntil) - now) / 60000);
       return res.status(423).json({
         message: `Account is temporarily locked due to excessive failed attempts. Please try again in ${minutesLeft} minute(s).`
+      });
+    }
+
+    // Email verification status check (block if explicitly false, skip if undefined for pre-seeded legacy test accounts)
+    if (user.isVerified === false) {
+      return res.status(403).json({
+        message: 'Your email address has not been verified yet. Please check your email inbox (and spam folder) for the verification link.',
+        notVerified: true
       });
     }
 
@@ -358,18 +387,18 @@ export const loginUser = async (req, res) => {
 
     // 2FA Verification Triggers
     if (user.twoFactorEnabled && !deviceBypassed) {
-      // Create short-lived 2FA authorization token (expires in 5 mins)
+      // Create short-lived 2FA authorization token (expires in 15 mins)
       const tempToken = jwt.sign(
         { tempUserId: user._id, action: '2fa_pending' },
         JWT_SECRET,
-        { expiresIn: '5m' }
+        { expiresIn: '15m' }
       );
 
       if (user.twoFactorMethod === 'email') {
         // Generate and store email OTP
         const otpCode = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digits
         user.emailOtp = otpCode;
-        user.emailOtpExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
+        user.emailOtpExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
 
         if (isFallback) {
           JsonDb.updateUser(user._id, {
@@ -384,11 +413,18 @@ export const loginUser = async (req, res) => {
           await user.save();
         }
 
-        // Print Simulated Email Delivery log
+        // Dispatch real or Ethereal 2FA OTP Email
+        const emailResult = await sendOtpEmail(user.email, otpCode);
+
+        // Print Simulated/Ethereal Email Delivery log
         console.log(`\n======================================================================`);
-        console.log(`[SIMULATED MAIL SERVER] Delivery to: ${user.email}`);
+        console.log(`[MAIL SERVER] 2FA OTP Delivery to: ${user.email}`);
         console.log(`[DisciplineX OTP CODE] Code: ${otpCode}`);
+        if (emailResult && emailResult.previewUrl) {
+          console.log(`[ETHEREAL MAILBOX] Link: ${emailResult.previewUrl}`);
+        }
         console.log(`======================================================================\n`);
+
 
         return res.json({
           require2FA: true,
@@ -492,7 +528,7 @@ export const verifyTwoFactor = async (req, res) => {
     // Verify Email OTP code
     if (user.twoFactorMethod === 'email') {
       const now = new Date();
-      if (user.emailOtp === otp && new Date(user.emailOtpExpires) > now) {
+      if (user.emailOtp && String(user.emailOtp) === String(otp) && new Date(user.emailOtpExpires).getTime() > now.getTime()) {
         isCodeValid = true;
         // Wipe OTP values once verified
         user.emailOtp = null;
@@ -617,11 +653,18 @@ export const requestReset = async (req, res) => {
       await user.save();
     }
 
-    // Print Simulated Reset Email Delivery log
+    // Dispatch real or Ethereal Password Reset Email
+    const emailResult = await sendResetCodeEmail(user.email, resetCode);
+
+    // Print Simulated/Ethereal Reset Email Delivery log
     console.log(`\n======================================================================`);
-    console.log(`[SIMULATED MAIL SERVER] Password Reset for: ${user.email}`);
+    console.log(`[MAIL SERVER] Password Reset for: ${user.email}`);
     console.log(`[DisciplineX PASSWORD RESET] Code: ${resetCode}`);
+    if (emailResult && emailResult.previewUrl) {
+      console.log(`[ETHEREAL MAILBOX] Link: ${emailResult.previewUrl}`);
+    }
     console.log(`======================================================================\n`);
+
 
     res.json({ message: 'If the email matches an active account, a reset code has been dispatched.' });
   } catch (error) {
@@ -662,7 +705,7 @@ export const executeReset = async (req, res) => {
     }
 
     const now = new Date();
-    if (user.resetPasswordToken !== code || new Date(user.resetPasswordExpires) < now) {
+    if (!user.resetPasswordToken || String(user.resetPasswordToken) !== String(code) || new Date(user.resetPasswordExpires).getTime() < now.getTime()) {
       return res.status(400).json({ message: 'Reset code is invalid or has expired.' });
     }
 
@@ -822,7 +865,7 @@ export const setupTwoFactor = async (req, res) => {
       // Generate a quick verification OTP
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
       user.emailOtp = otpCode;
-      user.emailOtpExpires = new Date(Date.now() + 5 * 60 * 1000);
+      user.emailOtpExpires = new Date(Date.now() + 15 * 60 * 1000);
 
       if (isFallback) {
         JsonDb.updateUser(user._id, {
@@ -833,10 +876,17 @@ export const setupTwoFactor = async (req, res) => {
         await user.save();
       }
 
+      // Dispatch real or Ethereal 2FA OTP Setup Email
+      const emailResult = await sendOtpEmail(user.email, otpCode);
+
       console.log(`\n======================================================================`);
-      console.log(`[SIMULATED MAIL SERVER] Enable 2FA Verification for: ${user.email}`);
+      console.log(`[MAIL SERVER] Enable 2FA Verification for: ${user.email}`);
       console.log(`[DisciplineX OTP CODE] Verification Code: ${otpCode}`);
+      if (emailResult && emailResult.previewUrl) {
+        console.log(`[ETHEREAL MAILBOX] Link: ${emailResult.previewUrl}`);
+      }
       console.log(`======================================================================\n`);
+
 
       return res.json({
         tempSetup: true,
@@ -911,7 +961,7 @@ export const confirmTwoFactor = async (req, res) => {
 
     if (method === 'email') {
       const now = new Date();
-      if (user.emailOtp === code && new Date(user.emailOtpExpires) > now) {
+      if (user.emailOtp && String(user.emailOtp) === String(code) && new Date(user.emailOtpExpires).getTime() > now.getTime()) {
         isCodeValid = true;
         user.emailOtp = null;
         user.emailOtpExpires = null;
@@ -1235,5 +1285,157 @@ export const updateProfile = async (req, res) => {
   } catch (error) {
     console.error('[Auth Controller] Profile Update Error:', error);
     res.status(500).json({ message: 'Server error updating profile', error: error.message });
+  }
+};
+
+/**
+ * 16. Verify Email Address via Token
+ */
+export const verifyEmail = async (req, res) => {
+  const { token } = req.query;
+  const host = req.get('host') || '';
+  const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
+  const clientUrl = isLocal ? 'http://localhost:5173' : 'https://disciplinex-tau.vercel.app';
+
+  if (!token) {
+    return res.status(400).send(`
+      <html>
+        <head>
+          <title>Email Verification Failed — DisciplineX</title>
+          <style>
+            body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #f8fafc; text-align: center; padding: 100px 20px; margin: 0; }
+            .card { background: #111827; border: 1px solid #1f2937; border-radius: 24px; padding: 48px; display: inline-block; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); max-width: 480px; }
+            .icon { font-size: 64px; color: #ef4444; margin-bottom: 24px; }
+            h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px 0; color: #ef4444; }
+            p { font-size: 15px; color: #9ca3af; line-height: 1.6; margin: 0 0 32px 0; }
+            .btn { display: inline-block; background: #6d28d9; color: white; padding: 12px 32px; border-radius: 12px; font-size: 14px; font-weight: 600; text-decoration: none; transition: background 0.2s; }
+            .btn:hover { background: #5b21b6; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div class="icon">❌</div>
+            <h1>Verification Failed</h1>
+            <p>Verification token is missing or has expired.</p>
+            <a href="${clientUrl}/login" class="btn">Go to Login</a>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+
+    if (isFallback) {
+      user = JsonDb.findUserByVerificationToken(token);
+    } else {
+      user = await User.findOne({ emailVerificationToken: token });
+    }
+
+    if (!user) {
+      return res.status(404).send(`
+        <html>
+          <head>
+            <title>Email Verification Failed — DisciplineX</title>
+            <style>
+              body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #f8fafc; text-align: center; padding: 100px 20px; margin: 0; }
+              .card { background: #111827; border: 1px solid #1f2937; border-radius: 24px; padding: 48px; display: inline-block; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); max-width: 480px; }
+              .icon { font-size: 64px; color: #ef4444; margin-bottom: 24px; }
+              h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px 0; color: #ef4444; }
+              p { font-size: 15px; color: #9ca3af; line-height: 1.6; margin: 0 0 32px 0; }
+              .btn { display: inline-block; background: #6d28d9; color: white; padding: 12px 32px; border-radius: 12px; font-size: 14px; font-weight: 600; text-decoration: none; transition: background 0.2s; }
+              .btn:hover { background: #5b21b6; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="icon">❌</div>
+              <h1>Verification Link Invalid</h1>
+              <p>The verification link is invalid, expired, or has already been used.</p>
+              <a href="${clientUrl}/login" class="btn">Go to Login</a>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    // Check expiration
+    const now = new Date();
+    if (user.emailVerificationExpires && new Date(user.emailVerificationExpires).getTime() < now.getTime()) {
+      return res.status(400).send(`
+        <html>
+          <head>
+            <title>Verification Link Expired — DisciplineX</title>
+            <style>
+              body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #f8fafc; text-align: center; padding: 100px 20px; margin: 0; }
+              .card { background: #111827; border: 1px solid #1f2937; border-radius: 24px; padding: 48px; display: inline-block; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); max-width: 480px; }
+              .icon { font-size: 64px; color: #ea580c; margin-bottom: 24px; }
+              h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px 0; color: #ea580c; }
+              p { font-size: 15px; color: #9ca3af; line-height: 1.6; margin: 0 0 32px 0; }
+              .btn { display: inline-block; background: #6d28d9; color: white; padding: 12px 32px; border-radius: 12px; font-size: 14px; font-weight: 600; text-decoration: none; transition: background 0.2s; }
+              .btn:hover { background: #5b21b6; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="icon">⏳</div>
+              <h1>Verification Expired</h1>
+              <p>The verification link has expired (validity is 24 hours). Please register again.</p>
+              <a href="${clientUrl}/login" class="btn">Go to Login</a>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    // Success: Verify User
+    user.isVerified = true;
+    user.emailVerificationToken = null;
+    user.emailVerificationExpires = null;
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        isVerified: true,
+        emailVerificationToken: null,
+        emailVerificationExpires: null
+      });
+    } else {
+      await user.save();
+    }
+
+    // Success Screen with redirect
+    res.send(`
+      <html>
+        <head>
+          <title>Email Verified Successfully — DisciplineX</title>
+          <meta http-equiv="refresh" content="4;url=${clientUrl}/login?verified=true" />
+          <style>
+            body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #f8fafc; text-align: center; padding: 100px 20px; margin: 0; }
+            .card { background: #111827; border: 1px solid #1f2937; border-radius: 24px; padding: 48px; display: inline-block; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); max-width: 480px; }
+            .icon { font-size: 64px; color: #10b981; margin-bottom: 24px; }
+            h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px 0; color: #10b981; }
+            p { font-size: 15px; color: #9ca3af; line-height: 1.6; margin: 0 0 32px 0; }
+            .btn { display: inline-block; background: #10b981; color: white; padding: 12px 32px; border-radius: 12px; font-size: 14px; font-weight: 600; text-decoration: none; transition: background 0.2s; }
+            .btn:hover { background: #059669; }
+            .timer { font-size: 12px; color: #6b7280; margin-top: 16px; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div class="icon">✅</div>
+            <h1>Email Verified!</h1>
+            <p>Your email address has been successfully verified. You will be redirected to the login page shortly.</p>
+            <a href="${clientUrl}/login?verified=true" class="btn">Proceed to Login</a>
+            <p class="timer">Auto-redirecting in a few seconds...</p>
+          </div>
+        </body>
+      </html>
+    `);
+
+  } catch (error) {
+    console.error('[Email Verification Error]', error);
+    res.status(500).send('Server error during email verification.');
   }
 };

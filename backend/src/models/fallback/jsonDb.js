@@ -44,6 +44,11 @@ export const JsonDb = {
     return users.find(u => u.email.toLowerCase() === email.toLowerCase());
   },
 
+  findUserByVerificationToken: (token) => {
+    const users = readData('users');
+    return users.find(u => u.emailVerificationToken === token);
+  },
+
   findUserById: (id) => {
     const users = readData('users');
     return users.find(u => u._id === id);
@@ -67,6 +72,9 @@ export const JsonDb = {
       resetPasswordExpires: null,
       lastLoginAt: null,
       lastLoginIp: null,
+      isVerified: false,
+      emailVerificationToken: null,
+      emailVerificationExpires: null,
       trustedDevices: [],
       activeSessions: [],
       webAuthnCredentials: [],
