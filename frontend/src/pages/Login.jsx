@@ -96,9 +96,15 @@ export const Login = () => {
     setSuccessMessage('');
     setInactivityLoggedOut(false);
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
     if (view === 'signup') {
       if (!name || !email || !password) {
         setFormError('Please fill out all fields.');
+        return;
+      }
+      if (!emailRegex.test(email)) {
+        setFormError('Please enter a valid email address.');
         return;
       }
       if (passwordStrength < 2) {
@@ -122,6 +128,10 @@ export const Login = () => {
     else if (view === 'login') {
       if (!email || !password) {
         setFormError('Please enter both email and password.');
+        return;
+      }
+      if (!emailRegex.test(email)) {
+        setFormError('Please enter a valid email address.');
         return;
       }
       if (requireCaptcha && !captchaAnswer) {

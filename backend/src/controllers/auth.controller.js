@@ -133,6 +133,12 @@ export const registerUser = async (req, res) => {
     return res.status(400).json({ message: 'Please add all required fields' });
   }
 
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+
   // Password strength check (min 8 chars, 1 number, 1 special character)
   const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$/;
   if (!passwordRegex.test(password)) {
