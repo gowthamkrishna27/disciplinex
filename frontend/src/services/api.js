@@ -1,6 +1,19 @@
-const API_BASE = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'))
-  ? 'http://localhost:5000/api'
-  : 'https://disciplinex-laxc.onrender.com/api';
+const getApiBase = () => {
+  if (typeof window === 'undefined') return 'https://disciplinex-laxc.onrender.com/api';
+  const hostname = window.location.hostname;
+  const isLocal = 
+    hostname === 'localhost' || 
+    hostname === '127.0.0.1' || 
+    hostname === '[::1]' || 
+    hostname.startsWith('192.168.') || 
+    hostname.startsWith('10.') || 
+    hostname.startsWith('172.') || 
+    hostname.endsWith('.local');
+    
+  return isLocal ? `http://${hostname}:5000/api` : 'https://disciplinex-laxc.onrender.com/api';
+};
+
+const API_BASE = getApiBase();
 
 const request = async (endpoint, options = {}) => {
   const token = localStorage.getItem('token');
