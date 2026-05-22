@@ -26,19 +26,41 @@ const request = async (endpoint, options = {}) => {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
+  // Set up 15-second AbortController timeout
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    console.warn(`[API Service] Request to ${endpoint} timed out after 15s. Aborting.`);
+    controller.abort();
+  }, 15000);
+
   const config = {
     ...options,
     headers,
     credentials: 'include',
+    signal: controller.signal,
   };
 
   if (options.body && typeof options.body === 'object') {
     config.body = JSON.stringify(options.body);
   }
 
+  console.log(`[API Service] Sending ${options.method || 'GET'} to ${API_BASE}${endpoint}`);
+
   try {
     const response = await fetch(`${API_BASE}${endpoint}`, config);
-    const data = await response.json();
+    
+    // Clear the timeout once request is completed
+    clearTimeout(timeoutId);
+
+    // Robust response body parsing based on content-type
+    let data;
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      data = await response.json();
+    } else {
+      const plainText = await response.text();
+      data = { message: plainText || `Server returned error status ${response.status}: ${response.statusText}` };
+    }
 
     if (!response.ok) {
       const err = new Error(data.message || 'An error occurred during request');
@@ -49,7 +71,25 @@ const request = async (endpoint, options = {}) => {
 
     return data;
   } catch (error) {
-    console.error(`[API Service] Error on ${options.method || 'GET'} ${endpoint}:`, error.message);
+    // Clear the timeout in case of exceptions before response
+    clearTimeout(timeoutId);
+
+    console.error(`[API Service] Error on ${options.method || 'GET'} ${endpoint}:`, error.name, error.message);
+    
+    // Translate AbortError (timeout) into user-friendly message
+    if (error.name === 'AbortError') {
+      const timeoutErr = new Error('Connection timeout: The backend server is taking too long to respond. If this is a production link, the server container might be waking up from cold-sleep. Please wait a few seconds and try again.');
+      timeoutErr.status = 408;
+      throw timeoutErr;
+    }
+
+    // Translate standard Failed to fetch (network down or CORS blocked) into user-friendly diagnostics
+    if (error.message && (error.message.includes('Failed to fetch') || error.message.includes('NetworkError'))) {
+      const networkErr = new Error('Network Connection Error: Unable to reach the backend server. Please verify your internet connection, confirm that the backend server is running on port 5000, and ensure no local ad-blocker or firewall is restricting the request.');
+      networkErr.status = 503;
+      throw networkErr;
+    }
+
     throw error;
   }
 };
@@ -61,3 +101,4 @@ export const api = {
   delete: (endpoint, options) => request(endpoint, { method: 'DELETE', ...options }),
 };
 export default api;
+
