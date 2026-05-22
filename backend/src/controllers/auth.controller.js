@@ -166,9 +166,9 @@ export const registerUser = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Generate verification token (expires in 24 hours)
+    // Generate verification token (expires in 5 minutes)
     const verificationToken = crypto.randomBytes(32).toString('hex');
-    const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const verificationExpires = new Date(Date.now() + 5 * 60 * 1000);
 
     // Create user
     let user;
@@ -1382,7 +1382,7 @@ export const verifyEmail = async (req, res) => {
             <div class="card">
               <div class="icon">⏳</div>
               <h1>Verification Expired</h1>
-              <p>The verification link has expired (validity is 24 hours). Please register again.</p>
+              <p>The verification link has expired (validity is 5 minutes). Please register again.</p>
               <a href="${clientUrl}/login" class="btn">Go to Login</a>
             </div>
           </body>
