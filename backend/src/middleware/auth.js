@@ -1,5 +1,8 @@
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
+import User from '../models/User.js';
+import { JsonDb } from '../models/fallback/jsonDb.js';
+import { checkFallback } from '../config/db.js';
 
 dotenv.config();
 
@@ -39,5 +42,39 @@ export const protect = async (req, res, next) => {
     }
   } else {
     res.status(401).json({ message: 'Not authorized, no token provided' });
+  }
+};
+
+export const requireVerifiedUser = async (req, res, next) => {
+  if (!req.user || !req.user.id) {
+    return res.status(401).json({ message: 'Not authorized, no user session found' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserById(req.user.id);
+    } else {
+      user = await User.findById(req.user.id);
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User account not found' });
+    }
+
+    // Restrict access if the user email is not verified
+    if (!user.isVerified) {
+      return res.status(403).json({ 
+        message: 'Access restricted: Please verify your email address to unlock this feature.',
+        unverified: true 
+      });
+    }
+
+    req.fullUser = user;
+    next();
+  } catch (error) {
+    console.error('[Verified User Middleware] Verification check error:', error.message);
+    res.status(500).json({ message: 'Internal server verification check failed' });
   }
 };

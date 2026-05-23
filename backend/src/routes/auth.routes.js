@@ -20,7 +20,7 @@ import {
   updateProfile,
   testSmtp
 } from '../controllers/auth.controller.js';
-import { protect } from '../middleware/auth.js';
+import { protect, requireVerifiedUser } from '../middleware/auth.js';
 
 const router = express.Router();
 
@@ -46,12 +46,12 @@ router.get('/sessions', protect, getActiveSessions);
 router.delete('/sessions/:sessionId', protect, revokeSession);
 
 // Two-Factor Setup Control
-router.post('/setup-2fa', protect, setupTwoFactor);
-router.post('/confirm-2fa', protect, confirmTwoFactor);
+router.post('/setup-2fa', protect, requireVerifiedUser, setupTwoFactor);
+router.post('/confirm-2fa', protect, requireVerifiedUser, confirmTwoFactor);
 
 // WebAuthn Biometrics
-router.get('/webauthn/register-options', protect, getBiometricRegisterOptions);
-router.post('/webauthn/register-confirm', protect, confirmBiometricRegister);
+router.get('/webauthn/register-options', protect, requireVerifiedUser, getBiometricRegisterOptions);
+router.post('/webauthn/register-confirm', protect, requireVerifiedUser, confirmBiometricRegister);
 router.post('/webauthn/login-options', getBiometricLoginOptions);
 router.post('/webauthn/login-verify', verifyBiometricLogin);
 

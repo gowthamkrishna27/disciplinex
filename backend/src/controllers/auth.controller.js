@@ -134,7 +134,7 @@ const addSession = (user, token, deviceName, ip) => {
  * 1. Register User
  */
 export const registerUser = async (req, res) => {
-  const { name, email, password } = req.body;
+  const { name, email, password, provider } = req.body;
 
   if (!name || !email || !password) {
     return res.status(400).json({ message: 'Please add all required fields' });
@@ -165,23 +165,15 @@ export const registerUser = async (req, res) => {
     }
 
     if (userExists) {
-      if (userExists.isVerified) {
-        return res.status(400).json({ message: 'User already exists with this email' });
-      } else {
-        // If the user exists but is NOT verified, delete the old unverified record
-        // so we can register them fresh and send/display a new verification link
-        console.log(`[Auth Controller] Deleting unverified duplicate user record for: ${email}`);
-        if (isFallback) {
-          JsonDb.deleteUser(userExists._id);
-        } else {
-          await User.deleteOne({ _id: userExists._id });
-        }
-      }
+      return res.status(400).json({ message: 'User already exists with this email' });
     }
 
     // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Auto-verify if registered via Google/GitHub OAuth providers
+    const isVerified = (provider === 'google' || provider === 'github') ? true : false;
 
     // Generate verification token (expires in 5 minutes)
     const verificationToken = crypto.randomBytes(32).toString('hex');
@@ -201,7 +193,7 @@ export const registerUser = async (req, res) => {
       trustedDevices: [],
       activeSessions: [],
       webAuthnCredentials: [],
-      isVerified: false,
+      isVerified,
       emailVerificationToken: hashedToken,
       emailVerificationExpires: verificationExpires,
       lastVerificationSentAt: new Date()
@@ -219,20 +211,42 @@ export const registerUser = async (req, res) => {
       const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
       const verifyUrl = `${protocol}://${host}/api/auth/verify-email?token=${verificationToken}`;
 
-      // Dispatch real or Ethereal email
-      const emailResult = await sendVerificationEmail(user.email, verifyUrl);
-
-      let message = 'Account created! A verification link has been dispatched to your email address. Please check your email inbox (and spam folder) to verify your account.';
-      if (emailResult && emailResult.previewUrl) {
-        message = `Account created! A verification link has been sent to Ethereal Mail. Please check your simulated mailbox here: ${emailResult.previewUrl}`;
+      // Dispatch real or Ethereal email in the background (no block)
+      let message = 'Account created successfully!';
+      if (!isVerified) {
+        const emailResult = await sendVerificationEmail(user.email, verifyUrl);
+        message = 'Account created! A verification link has been dispatched to your email address. Please check your email inbox (and spam folder) to verify your account.';
+        if (emailResult && emailResult.previewUrl) {
+          message = `Account created! A verification link has been sent to Ethereal Mail. Please check your simulated mailbox here: ${emailResult.previewUrl}`;
+        }
       }
 
+      // Generate full login session immediately for soft-verification onboarding
+      const token = generateToken(user._id);
+      const deviceName = getDeviceName(req.headers['user-agent']);
+      addSession(user, token, deviceName, req.ip || req.headers['x-forwarded-for'] || '127.0.0.1');
+
+      if (isFallback) {
+        JsonDb.updateUser(user._id, { activeSessions: user.activeSessions });
+      } else {
+        await user.save();
+      }
+
+      // Set secure HTTP-only cookie
+      res.cookie('dx_token', token, {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: isProd ? 'none' : 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+      });
 
       res.status(201).json({
         _id: user._id,
         name: user.name,
         email: user.email,
         dailyGoal: user.dailyGoal,
+        isVerified: user.isVerified,
+        token,
         message
       });
     } else {
@@ -285,25 +299,7 @@ export const loginUser = async (req, res) => {
       });
     }
 
-    // Email verification status check (block if explicitly false, skip if undefined for pre-seeded legacy test accounts)
-    if (user.isVerified === false) {
-      if (user.emailVerificationExpires && new Date(user.emailVerificationExpires).getTime() < now.getTime()) {
-        // Delete expired unverified details
-        if (isFallback) {
-          JsonDb.deleteUser(user._id);
-        } else {
-          await User.deleteOne({ _id: user._id });
-        }
-        return res.status(401).json({
-          message: 'Your email verification window (5 minutes) has expired and your details were removed. Please register again.'
-        });
-      }
 
-      return res.status(403).json({
-        message: 'Your email address has not been verified yet. Please check your email inbox (and spam folder) for the verification link.',
-        notVerified: true
-      });
-    }
 
     // CAPTCHA Challenge Validation (after 3 failed attempts)
     if (user.failedLoginAttempts >= 3) {
@@ -528,6 +524,7 @@ export const loginUser = async (req, res) => {
       email: user.email,
       dailyGoal: user.dailyGoal,
       twoFactorEnabled: user.twoFactorEnabled,
+      isVerified: user.isVerified,
       lastLoginAt: user.lastLoginAt,
       lastLoginIp: user.lastLoginIp,
       token // also return in JSON body for authorization header fallbacks
@@ -641,6 +638,7 @@ export const verifyTwoFactor = async (req, res) => {
       email: user.email,
       dailyGoal: user.dailyGoal,
       twoFactorEnabled: user.twoFactorEnabled,
+      isVerified: user.isVerified,
       lastLoginAt: user.lastLoginAt,
       lastLoginIp: user.lastLoginIp,
       token,
@@ -1411,13 +1409,6 @@ export const verifyEmail = async (req, res) => {
     // Check expiration
     const now = new Date();
     if (user.emailVerificationExpires && new Date(user.emailVerificationExpires).getTime() < now.getTime()) {
-      // Delete unverified user details from database since verification expired
-      if (isFallback) {
-        JsonDb.deleteUser(user._id);
-      } else {
-        await User.deleteOne({ _id: user._id });
-      }
-
       return res.status(400).send(`
         <html>
           <head>
@@ -1436,7 +1427,7 @@ export const verifyEmail = async (req, res) => {
             <div class="card">
               <div class="icon">⏳</div>
               <h1>Verification Expired</h1>
-              <p>The verification link has expired (validity is 5 minutes). Please register again.</p>
+              <p>The verification link has expired. Please log in to your dashboard to request a fresh verification link.</p>
               <a href="${clientUrl}/login" class="btn">Go to Login</a>
             </div>
           </body>
@@ -1602,20 +1593,14 @@ export const verifyEmailCode = async (req, res) => {
     }
 
     if (user.isVerified) {
-      return res.json({ message: 'Account is already verified.' });
+      return res.json({ message: 'Account is already verified.', isVerified: user.isVerified });
     }
 
     // Check expiration
     const now = new Date();
     if (user.emailVerificationExpires && new Date(user.emailVerificationExpires).getTime() < now.getTime()) {
-      // Delete unverified user details since verification expired
-      if (isFallback) {
-        JsonDb.deleteUser(user._id);
-      } else {
-        await User.deleteOne({ _id: user._id });
-      }
       return res.status(400).json({
-        message: 'The verification code has expired (5-minute validity window). Please register again.'
+        message: 'The verification code has expired. Please request a fresh verification link in your dashboard.'
       });
     }
 

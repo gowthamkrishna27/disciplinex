@@ -387,13 +387,59 @@ export const Settings = () => {
             </div>
           )}
 
+          {/* Email Verification Status Info Card */}
+          {user && !user.isVerified && (
+            <div className="p-4 bg-brand-purple/5 border border-brand-purple/20 rounded-xl flex items-start gap-3">
+              <Info className="w-5 h-5 text-brand-purple flex-shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-xs font-bold text-zinc-800 dark:text-zinc-200 m-0 flex items-center gap-1.5">
+                  Verification Pending
+                  <span className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-brand-amber/15 text-brand-amber border border-brand-amber/20">
+                    Restricted Access
+                  </span>
+                </h4>
+                <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-1 leading-normal">
+                  Your email address <strong className="text-zinc-700 dark:text-zinc-300">{user.email}</strong> is unverified. To protect your data, enabling 2FA, registering WebAuthn biometrics, exporting your routines, or wiping history are restricted until you complete email verification.
+                </p>
+                <p className="text-[10px] text-brand-purple font-semibold mt-1">
+                  Please click the link in the verification email sent to your inbox.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {user && user.isVerified && (
+            <div className="p-4 bg-brand-green/5 border border-brand-green/20 rounded-xl flex items-start gap-3">
+              <CheckCircle2 className="w-5 h-5 text-brand-green flex-shrink-0 mt-0.5" />
+              <div>
+                <h4 className="text-xs font-bold text-zinc-800 dark:text-zinc-200 m-0 flex items-center gap-1.5">
+                  Email Verified
+                  <span className="text-[8px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-brand-green/15 text-brand-green border border-brand-green/20">
+                    Full Secure Access
+                  </span>
+                </h4>
+                <p className="text-[10px] text-zinc-500 dark:text-zinc-400 mt-1 leading-normal">
+                  Your email address <strong className="text-zinc-700 dark:text-zinc-300">{user.email}</strong> has been successfully verified. All advanced security capabilities and data tools are fully unlocked.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* SECTION A: TWO-FACTOR AUTHENTICATION */}
           <div className="space-y-4">
             <h4 className="text-xs font-bold uppercase tracking-wider text-color-text-muted-light dark:text-color-text-muted-dark flex items-center gap-1.5">
               <Key className="w-4 h-4 text-brand-purple" /> Two-Factor Authentication (2FA)
             </h4>
 
-            {twoFaSetupStep === 'idle' ? (
+            {user && !user.isVerified ? (
+              <div className="p-4 border border-zinc-200 dark:border-zinc-800 rounded-xl bg-zinc-50/50 dark:bg-zinc-900/50 flex flex-col items-center text-center py-6">
+                <Lock className="w-8 h-8 text-zinc-400 dark:text-zinc-600 mb-2 animate-none" />
+                <h5 className="text-xs font-bold text-zinc-700 dark:text-zinc-300 m-0">Two-Factor Authentication Locked</h5>
+                <p className="text-[10px] text-zinc-400 max-w-sm mt-1 leading-normal">
+                  Please verify your email address to unlock and configure secure Two-Factor Authentication.
+                </p>
+              </div>
+            ) : twoFaSetupStep === 'idle' ? (
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-3.5 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-border-light dark:border-border-dark">
                   <div>
@@ -612,7 +658,6 @@ export const Settings = () => {
           </div>
         </div>
 
-        {/* 4. Data Tools / Backup */}
         <div className="bg-white dark:bg-bg-card-dark border border-border-light dark:border-border-dark p-6 rounded-2xl card-shadow">
           <div className="flex items-center justify-between">
             <div>
@@ -623,19 +668,34 @@ export const Settings = () => {
               <p className="text-[10px] text-zinc-400 mt-0.5">
                 Download a complete secure JSON backup file of all scheduled routines and streaks.
               </p>
+              {user && !user.isVerified && (
+                <p className="text-[9px] text-brand-red font-semibold mt-1">
+                  Email verification required to export routine backups.
+                </p>
+              )}
             </div>
 
-            <button
-              onClick={handleExportData}
-              className="flex items-center gap-2 px-4 py-2 border border-border-light dark:border-border-dark hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded-xl text-xs font-semibold transition cursor-pointer select-none"
-            >
-              <Download className="w-4 h-4" />
-              Export JSON Backup
-            </button>
+            {user && !user.isVerified ? (
+              <button
+                disabled
+                className="flex items-center gap-2 px-4 py-2 border border-zinc-200 dark:border-zinc-800 bg-zinc-100 dark:bg-zinc-950 text-zinc-450 dark:text-zinc-600 rounded-xl text-xs font-semibold cursor-not-allowed select-none"
+                title="Verify email to export data"
+              >
+                <Lock className="w-4 h-4 text-zinc-450" />
+                Export Locked
+              </button>
+            ) : (
+              <button
+                onClick={handleExportData}
+                className="flex items-center gap-2 px-4 py-2 border border-border-light dark:border-border-dark hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded-xl text-xs font-semibold transition cursor-pointer select-none"
+              >
+                <Download className="w-4 h-4" />
+                Export JSON Backup
+              </button>
+            )}
           </div>
         </div>
 
-        {/* 5. Danger Zone */}
         <div className="bg-white dark:bg-bg-card-dark border border-brand-red/20 dark:border-brand-red/35 p-6 rounded-2xl card-shadow bg-brand-red/5 dark:bg-brand-red/5">
           <div className="flex items-start justify-between">
             <div>
@@ -646,14 +706,30 @@ export const Settings = () => {
               <p className="text-xs text-brand-red/80 mt-1 max-w-md">
                 Wiping your account is a critical action. It will permanently clear your scheduled tasks, past tracking logs, and active streaks.
               </p>
+              {user && !user.isVerified && (
+                <p className="text-[10px] text-brand-red font-semibold mt-2">
+                  Email verification required to access Danger Zone actions.
+                </p>
+              )}
             </div>
 
-            <button
-              onClick={() => setShowDangerZone(!showDangerZone)}
-              className="px-4 py-2 bg-brand-red/10 border border-brand-red/20 hover:bg-brand-red hover:text-white text-brand-red rounded-xl text-xs font-semibold transition cursor-pointer select-none"
-            >
-              Reveal Actions
-            </button>
+            {user && !user.isVerified ? (
+              <button
+                disabled
+                className="px-4 py-2 bg-zinc-100 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-zinc-450 dark:text-zinc-600 rounded-xl text-xs font-semibold cursor-not-allowed select-none"
+                title="Verify email to access danger zone"
+              >
+                <Lock className="w-3.5 h-3.5 inline mr-1" />
+                Actions Locked
+              </button>
+            ) : (
+              <button
+                onClick={() => setShowDangerZone(!showDangerZone)}
+                className="px-4 py-2 bg-brand-red/10 border border-brand-red/20 hover:bg-brand-red hover:text-white text-brand-red rounded-xl text-xs font-semibold transition cursor-pointer select-none"
+              >
+                Reveal Actions
+              </button>
+            )}
           </div>
 
           {showDangerZone && (

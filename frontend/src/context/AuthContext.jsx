@@ -128,6 +128,10 @@ export const AuthProvider = ({ children }) => {
     setInactivityLoggedOut(false);
     try {
       const data = await api.post('/auth/signup', { name, email, password });
+      if (data.token) {
+        localStorage.setItem('token', data.token);
+        setUser(data);
+      }
       return data;
     } catch (err) {
       setError(err.message || 'Registration failed');

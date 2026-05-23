@@ -4,6 +4,14 @@ import dns from 'dns';
 let testAccount = null;
 
 const getTransporter = async () => {
+  // If Resend API Key is provided, use the lightweight mock transporter (intercepted in sendMailWithRetry)
+  if (process.env.RESEND_API_KEY) {
+    return {
+      options: { host: 'resend.api' },
+      sendMail: async () => ({ messageId: 'resend-mock-id' })
+    };
+  }
+
   // If custom SMTP settings are provided in env, use them
   if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
     const port = Number(process.env.SMTP_PORT) || 587;
@@ -75,6 +83,48 @@ const getTransporter = async () => {
 
 // Retry-safe helper function to send email
 const sendMailWithRetry = async (transporter, mailOptions, retries = 2) => {
+  // If Resend API key is configured, use the HTTPS API directly (bypasses Railway SMTP port blocks)
+  if (process.env.RESEND_API_KEY) {
+    const fromEmail = process.env.RESEND_FROM || 'onboarding@resend.dev';
+    const fromName = mailOptions.from ? mailOptions.from.split('<')[0].trim().replace(/"/g, '') : 'DisciplineX';
+    
+    console.log(`[Email Service] RESEND_API_KEY detected. Dispatching email to ${mailOptions.to} via HTTPS API...`);
+    
+    for (let attempt = 1; attempt <= retries; attempt++) {
+      try {
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            from: `${fromName} <${fromEmail}>`,
+            to: mailOptions.to,
+            subject: mailOptions.subject,
+            html: mailOptions.html
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`[Email Service] Email sent successfully via Resend HTTPS. ID: ${data.id}`);
+          return { success: true, info: { messageId: data.id } };
+        } else {
+          const errorText = await response.text();
+          throw new Error(`Resend HTTP ${response.status}: ${errorText}`);
+        }
+      } catch (err) {
+        console.warn(`[Email Service] Resend attempt ${attempt} failed: ${err.message}`);
+        if (attempt === retries) {
+          throw err;
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+  }
+
+  // Fallback to standard Nodemailer transporter
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const info = await transporter.sendMail(mailOptions);

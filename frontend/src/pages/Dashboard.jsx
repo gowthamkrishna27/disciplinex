@@ -17,7 +17,48 @@ import {
 } from 'lucide-react';
 
 export const Dashboard = () => {
-  const { user } = useAuth();
+  const { user, resendVerification } = useAuth();
+
+  // Soft Verification States
+  const [showBanner, setShowBanner] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
+  const [sending, setSending] = useState(false);
+  const [bannerMessage, setBannerMessage] = useState('');
+  const [bannerType, setBannerType] = useState('info'); // info, success, error
+
+  useEffect(() => {
+    if (user && !user.isVerified) {
+      const dismissed = localStorage.getItem(`dismiss_verify_${user._id}`);
+      setShowBanner(!dismissed);
+    } else {
+      setShowBanner(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const timer = setInterval(() => {
+      setCooldown(prev => prev - 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [cooldown]);
+
+  const handleResend = async () => {
+    if (cooldown > 0 || sending) return;
+    setSending(true);
+    setBannerMessage('');
+    try {
+      const res = await resendVerification(user.email);
+      setBannerType('success');
+      setBannerMessage(res.message || 'Verification link sent successfully!');
+      setCooldown(60);
+    } catch (err) {
+      setBannerType('error');
+      setBannerMessage(err.message || 'Failed to send verification link.');
+    } finally {
+      setSending(false);
+    }
+  };
   
   // Date State (Defaults to Today's date YYYY-MM-DD)
   const [selectedDate, setSelectedDate] = useState(() => {
@@ -217,6 +258,63 @@ export const Dashboard = () => {
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 font-sans">
       
+      {/* Soft Verification Reminder Banner */}
+      {showBanner && (
+        <div className="mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 bg-brand-purple/10 text-brand-purple border border-brand-purple/20 rounded-xl transition-all duration-300">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-brand-purple/15 dark:bg-brand-purple/20 flex items-center justify-center text-brand-purple flex-shrink-0">
+              <AlertCircle className="w-5 h-5 animate-pulse" />
+            </div>
+            <div>
+              <p className="text-sm font-semibold m-0 text-zinc-800 dark:text-zinc-200">
+                Verify your email to unlock enhanced security features.
+              </p>
+              {bannerMessage ? (
+                <p className={`text-xs mt-1 m-0 font-medium ${bannerType === 'error' ? 'text-brand-red' : 'text-brand-green'}`}>
+                  {bannerMessage}
+                </p>
+              ) : (
+                <p className="text-xs mt-0.5 m-0 text-zinc-500 dark:text-zinc-400">
+                  Unverified accounts cannot enable 2FA, register biometrics, export routines, or wipe history.
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-3 self-end md:self-auto">
+            <button
+              onClick={handleResend}
+              disabled={cooldown > 0 || sending}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition select-none cursor-pointer ${
+                cooldown > 0
+                  ? 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-400 dark:text-zinc-500 cursor-not-allowed'
+                  : 'bg-brand-purple hover:bg-brand-purple/90 text-white border-brand-purple'
+              }`}
+            >
+              {sending ? (
+                <span className="flex items-center gap-1">
+                  <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  Sending...
+                </span>
+              ) : cooldown > 0 ? (
+                `Resend link (${cooldown}s)`
+              ) : (
+                'Resend link'
+              )}
+            </button>
+            <button
+              onClick={() => {
+                localStorage.setItem(`dismiss_verify_${user._id}`, 'true');
+                setShowBanner(false);
+              }}
+              className="p-1.5 hover:bg-brand-purple/10 dark:hover:bg-brand-purple/20 rounded-lg transition text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200 cursor-pointer"
+              title="Dismiss"
+            >
+              <XCircle className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Page Title & Date Navigation */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
         <div>
