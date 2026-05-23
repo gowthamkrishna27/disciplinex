@@ -53,6 +53,10 @@ export const Login = () => {
   const [loadingState, setLoadingState] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
 
+  // Email verification flow states
+  const [verificationEmail, setVerificationEmail] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+
   const renderMessageWithLinks = (text) => {
     if (!text) return null;
     const urlRegex = /(https?:\/\/[^\s]+)/g;
@@ -78,6 +82,7 @@ export const Login = () => {
   const { 
     login, 
     signup, 
+    verifyEmailCode,
     verify2FA,
     inactivityLoggedOut,
     setInactivityLoggedOut
@@ -138,7 +143,8 @@ export const Login = () => {
       'login': 'Verifying Credentials...',
       '2fa': 'Validating Token...',
       'forgot-password': 'Dispatching OTP Code...',
-      'reset-password': 'Updating Credentials...'
+      'reset-password': 'Updating Credentials...',
+      'verify-email-code': 'Verifying Code...'
     };
     setLoadingMessage(initialMessages[view] || 'Processing...');
     const slowTimer = setTimeout(() => {
@@ -188,8 +194,9 @@ export const Login = () => {
       try {
         const resData = await signup(name, email, password);
         console.log('[Login] Signup response received:', resData);
-        setSuccessMessage(resData?.message || 'Account created successfully! Please check your email.');
-        setView('login');
+        setVerificationEmail(email);
+        setSuccessMessage(resData?.message || 'Account created successfully! Please check your email for the verification code.');
+        setView('verify-email-code');
         setPassword('');
         setName('');
       } catch (err) {
@@ -250,6 +257,30 @@ export const Login = () => {
         console.log('[Login] Login finally block - resetting loading state.');
         setLoadingState(false);
       }
+    }
+  };
+
+  // Handle Email OTP verification code submission
+  const handleEmailCodeVerify = async (e) => {
+    e.preventDefault();
+    setFormError('');
+    setSuccessMessage('');
+
+    if (!verificationCode) {
+      setFormError('Please enter the 6-digit verification code.');
+      return;
+    }
+
+    setLoadingState(true);
+    try {
+      const res = await verifyEmailCode(verificationEmail, verificationCode);
+      setSuccessMessage(res?.message || 'Email verified successfully! Please log in.');
+      setView('login');
+      setVerificationCode('');
+    } catch (err) {
+      setFormError(err.message || 'Verification failed. The code may be invalid or expired.');
+    } finally {
+      setLoadingState(false);
     }
   };
 
@@ -658,6 +689,68 @@ export const Login = () => {
                   className="ml-1.5 text-brand-purple hover:underline font-semibold cursor-pointer"
                 >
                   Sign In
+                </button>
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ----------------- EMAIL OTP CODE VERIFICATION VIEW ----------------- */}
+        {view === 'verify-email-code' && (
+          <div>
+            <div className="flex flex-col items-center mb-6 text-center">
+              <div className="w-12 h-12 rounded-xl bg-brand-purple/10 dark:bg-brand-purple/20 flex items-center justify-center text-brand-purple mb-3 animate-pulse">
+                <Shield className="w-6 h-6" />
+              </div>
+              <h1 className="text-2xl font-display font-semibold tracking-tight text-color-text-light dark:text-color-text-dark m-0">
+                Verify Your Email
+              </h1>
+              <p className="text-xs text-color-text-muted-light dark:text-color-text-muted-dark mt-2 leading-relaxed">
+                We have dispatched a 6-digit verification code to <span className="font-semibold text-brand-purple break-all">{verificationEmail}</span>. Enter it below to launch your workspace.
+              </p>
+            </div>
+
+            <form onSubmit={handleEmailCodeVerify} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-color-text-muted-light dark:text-color-text-muted-dark mb-2 text-center">
+                  6-Digit Verification Code
+                </label>
+                <div className="relative flex justify-center">
+                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-color-text-muted-light dark:text-color-text-muted-dark">
+                    <KeyRound className="w-4 h-4" />
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="Enter Code (e.g. 123456)"
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value.replace(/\D/g, '').substring(0, 6))}
+                    className="w-full pl-10 pr-4 py-2.5 bg-transparent border border-border-light dark:border-border-dark rounded-xl text-center font-mono tracking-[0.5em] text-lg outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple dark:text-white transition"
+                    required
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={loadingState}
+                className="w-full mt-2 py-2.5 bg-brand-purple hover:bg-brand-purple/90 disabled:bg-brand-purple/50 text-white rounded-xl text-sm font-semibold transition cursor-pointer select-none card-shadow flex items-center justify-center gap-2"
+              >
+                {loadingState ? loadingMessage : 'Verify & Launch Workspace'}
+              </button>
+            </form>
+
+            <div className="mt-8 pt-6 border-t border-border-light dark:border-border-dark text-center">
+              <p className="text-xs text-color-text-muted-light dark:text-color-text-muted-dark">
+                Wait! Misspelled your email or want to try again?
+                <button
+                  onClick={() => {
+                    setView('signup');
+                    setFormError('');
+                    setSuccessMessage('');
+                  }}
+                  className="ml-1.5 text-brand-purple hover:underline font-semibold cursor-pointer"
+                >
+                  Register again
                 </button>
               </p>
             </div>

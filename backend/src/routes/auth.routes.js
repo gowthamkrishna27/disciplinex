@@ -3,6 +3,7 @@ import {
   registerUser,
   loginUser,
   verifyEmail,
+  verifyEmailCode,
   verifyTwoFactor,
   requestReset,
   executeReset,
@@ -23,6 +24,7 @@ const router = express.Router();
 
 // General Registration and Login
 router.post('/signup', registerUser);
+router.post('/verify-code', verifyEmailCode);
 router.get('/verify-email', verifyEmail);
 router.post('/login', loginUser);
 router.post('/verify-2fa', verifyTwoFactor);

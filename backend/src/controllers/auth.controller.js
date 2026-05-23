@@ -177,8 +177,8 @@ export const registerUser = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Generate verification token (expires in 5 minutes)
-    const verificationToken = crypto.randomBytes(32).toString('hex');
+    // Generate verification 6-digit code (expires in 5 minutes)
+    const verificationToken = Math.floor(100000 + Math.random() * 900000).toString();
     const verificationExpires = new Date(Date.now() + 5 * 60 * 1000);
 
     // Create user
@@ -206,20 +206,15 @@ export const registerUser = async (req, res) => {
     }
 
     if (user) {
-      // Build verification URL dynamically based on request host and protocol
-      const host = req.get('host');
-      const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-      const verifyUrl = `${protocol}://${host}/api/auth/verify-email?token=${verificationToken}`;
-
       // Dispatch real or Ethereal email
-      const emailResult = await sendVerificationEmail(user.email, verifyUrl);
+      const emailResult = await sendVerificationEmail(user.email, verificationToken);
 
-      let message = 'Account created! A verification link has been dispatched to your email address. Please check your email to verify your account.';
+      let message = 'Account created! A 6-digit verification code has been dispatched to your email address. Please check your inbox and enter the code to verify your account.';
       if (emailResult && emailResult.previewUrl) {
-        message = `Account created! A verification link has been sent to Ethereal Mail. Please check your simulated mailbox here: ${emailResult.previewUrl}`;
+        message = `Account created! A verification code has been sent to Ethereal Mail. Please check your simulated mailbox here: ${emailResult.previewUrl} (Code: ${verificationToken})`;
       } else if (!emailResult || !emailResult.success) {
         // Fallback for data center network blocks on SMTP ports
-        message = `Account created! However, our email service is currently experiencing connection restrictions in this hosting environment. You can verify your account immediately by clicking this secure link: ${verifyUrl}`;
+        message = `Account created! However, our email service is currently experiencing connection restrictions in this hosting environment. You can verify your account immediately by entering this secure verification code: ${verificationToken}`;
       }
 
       res.status(201).json({
@@ -1470,5 +1465,75 @@ export const verifyEmail = async (req, res) => {
   } catch (error) {
     console.error('[Email Verification Error]', error);
     res.status(500).send('Server error during email verification.');
+  }
+};
+
+/**
+ * 12. Verify Email OTP Code
+ */
+export const verifyEmailCode = async (req, res) => {
+  const { email, code } = req.body;
+
+  if (!email || !code) {
+    return res.status(400).json({ message: 'Email and verification code are required.' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+
+    if (isFallback) {
+      user = JsonDb.findUserByEmail(email);
+    } else {
+      user = await User.findOne({ email });
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User record not found.' });
+    }
+
+    if (user.isVerified) {
+      return res.json({ message: 'Account is already verified.' });
+    }
+
+    // Check expiration
+    const now = new Date();
+    if (user.emailVerificationExpires && new Date(user.emailVerificationExpires).getTime() < now.getTime()) {
+      // Delete unverified user details since verification expired
+      if (isFallback) {
+        JsonDb.deleteUser(user._id);
+      } else {
+        await User.deleteOne({ _id: user._id });
+      }
+      return res.status(400).json({
+        message: 'The verification code has expired (5-minute validity window). Please register again.'
+      });
+    }
+
+    // Verify code matches (as string comparison)
+    if (!user.emailVerificationToken || String(user.emailVerificationToken) !== String(code)) {
+      return res.status(400).json({ message: 'Invalid verification code. Please try again.' });
+    }
+
+    // Success: Verify User
+    user.isVerified = true;
+    user.emailVerificationToken = null;
+    user.emailVerificationExpires = null;
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        isVerified: true,
+        emailVerificationToken: null,
+        emailVerificationExpires: null
+      });
+    } else {
+      await user.save();
+    }
+
+    res.json({ message: 'Email verified successfully! You can now log in.' });
+
+  } catch (error) {
+    console.error('[Email Code Verification Error]', error);
+    res.status(500).json({ message: 'Server error during code verification.', error: error.message });
   }
 };

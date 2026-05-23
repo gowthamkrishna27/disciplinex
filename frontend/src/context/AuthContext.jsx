@@ -135,6 +135,17 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const verifyEmailCode = async (email, code) => {
+    setError(null);
+    try {
+      const data = await api.post('/auth/verify-code', { email, code });
+      return data;
+    } catch (err) {
+      setError(err.message || 'Verification failed');
+      throw err;
+    }
+  };
+
   const logout = (reason = null) => {
     localStorage.removeItem('token');
     setUser(null);
@@ -349,6 +360,7 @@ export const AuthProvider = ({ children }) => {
       error, 
       login, 
       signup, 
+      verifyEmailCode,
       logout, 
       updateUserProfile, 
       setError,
