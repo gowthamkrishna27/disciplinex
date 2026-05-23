@@ -17,13 +17,15 @@ import {
   getBiometricLoginOptions,
   verifyBiometricLogin,
   getProfile,
-  updateProfile
+  updateProfile,
+  testSmtp
 } from '../controllers/auth.controller.js';
 import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
 
 // General Registration and Login
+router.get('/test-smtp', testSmtp);
 router.post('/signup', registerUser);
 router.post('/verify-code', verifyEmailCode);
 router.get('/verify-email', verifyEmail);

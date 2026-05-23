@@ -425,3 +425,69 @@ export const sendSecurityAlertEmail = async (toEmail, alertDetails) => {
   }
   return { success: false };
 };
+
+export const testSmtpConnection = async () => {
+  const diagnostics = {
+    env: {
+      SMTP_HOST: process.env.SMTP_HOST || 'Not Configured',
+      SMTP_PORT: process.env.SMTP_PORT || 'Not Configured',
+      SMTP_SECURE: process.env.SMTP_SECURE || 'Not Configured',
+      SMTP_USER: process.env.SMTP_USER ? 'Configured (Hidden)' : 'Not Configured',
+      SMTP_PASS: process.env.SMTP_PASS ? 'Configured (Hidden)' : 'Not Configured',
+      NODE_ENV: process.env.NODE_ENV || 'Not Configured',
+    },
+    transporterVerify: null,
+    sendTestMail: null,
+    error: null,
+    timestamp: new Date().toISOString()
+  };
+
+  try {
+    const transporter = await getTransporter();
+    if (!transporter) {
+      diagnostics.error = 'Failed to create transporter: No custom SMTP settings in environment and Ethereal fallback failed.';
+      return diagnostics;
+    }
+
+    diagnostics.transporterConfig = {
+      host: transporter.options.host,
+      port: transporter.options.port,
+      secure: transporter.options.secure,
+    };
+
+    // 1. Verify connection configuration
+    try {
+      await transporter.verify();
+      diagnostics.transporterVerify = 'Success! Transporter is ready to take messages.';
+    } catch (verifyErr) {
+      diagnostics.transporterVerify = `Failed: ${verifyErr.message}`;
+      diagnostics.error = verifyErr.message;
+      return diagnostics;
+    }
+
+    // 2. Try sending a quick test email to the owner themselves (SMTP_USER)
+    if (process.env.SMTP_USER) {
+      try {
+        const info = await transporter.sendMail({
+          from: `"DisciplineX Diagnostics" <${process.env.SMTP_USER}>`,
+          to: process.env.SMTP_USER,
+          subject: 'DisciplineX SMTP Diagnostics Success',
+          text: `SMTP Diagnostics completed successfully at ${new Date().toISOString()} from Railway!`,
+          html: `<p>SMTP Diagnostics completed successfully at <strong>${new Date().toISOString()}</strong> from Railway!</p>`
+        });
+        diagnostics.sendTestMail = `Success! Message ID: ${info.messageId}`;
+      } catch (sendErr) {
+        diagnostics.sendTestMail = `Failed: ${sendErr.message}`;
+        diagnostics.error = sendErr.message;
+      }
+    } else {
+      diagnostics.sendTestMail = 'Skipped: SMTP_USER not configured.';
+    }
+
+    return diagnostics;
+  } catch (err) {
+    diagnostics.error = `Unexpected diagnostics failure: ${err.message}`;
+    return diagnostics;
+  }
+};
+

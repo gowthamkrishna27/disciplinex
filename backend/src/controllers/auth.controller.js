@@ -6,7 +6,7 @@ import { checkFallback } from '../config/db.js';
 import User from '../models/User.js';
 import { JsonDb } from '../models/fallback/jsonDb.js';
 import { generateCaptcha, verifyCaptcha } from '../middleware/security.js';
-import { sendVerificationEmail, sendOtpEmail, sendResetCodeEmail } from '../utils/email.js';
+import { sendVerificationEmail, sendOtpEmail, sendResetCodeEmail, testSmtpConnection } from '../utils/email.js';
 
 // Load JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET || 'disciplinex_super_secret_key_123_456';
@@ -1649,3 +1649,20 @@ export const verifyEmailCode = async (req, res) => {
     res.status(500).json({ message: 'Server error during code verification.', error: error.message });
   }
 };
+
+/**
+ * 18. SMTP Diagnostics Endpoint
+ */
+export const testSmtp = async (req, res) => {
+  try {
+    const results = await testSmtpConnection();
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to run SMTP diagnostics.',
+      error: error.message
+    });
+  }
+};
+
