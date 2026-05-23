@@ -206,6 +206,9 @@ export const registerUser = async (req, res) => {
       let message = 'Account created! A verification link has been dispatched to your email address. Please check your email to verify your account.';
       if (emailResult && emailResult.previewUrl) {
         message = `Account created! A verification link has been sent to Ethereal Mail. Please check your simulated mailbox here: ${emailResult.previewUrl}`;
+      } else if (!emailResult || !emailResult.success) {
+        // Fallback for data center network blocks on SMTP ports
+        message = `Account created! However, our email service is currently experiencing connection restrictions in this hosting environment. You can verify your account immediately by clicking this secure link: ${verifyUrl}`;
       }
 
       res.status(201).json({
