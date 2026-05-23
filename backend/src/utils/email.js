@@ -13,6 +13,8 @@ const getTransporter = async () => {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
       },
+      connectionTimeout: 5000, // 5 seconds
+      socketTimeout: 5000,     // 5 seconds
     });
   }
 
@@ -35,6 +37,8 @@ const getTransporter = async () => {
         user: testAccount.user,
         pass: testAccount.pass,
       },
+      connectionTimeout: 5000, // 5 seconds
+      socketTimeout: 5000,     // 5 seconds
     });
   }
 
