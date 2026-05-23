@@ -1,5 +1,5 @@
 const getApiBase = () => {
-  if (typeof window === 'undefined') return 'https://disciplinex-laxc.onrender.com/api';
+  if (typeof window === 'undefined') return 'https://disciplinex-production.up.railway.app/api';
   const hostname = window.location.hostname;
   const isLocal = 
     hostname === 'localhost' || 
@@ -10,12 +10,12 @@ const getApiBase = () => {
     hostname.startsWith('172.') || 
     hostname.endsWith('.local');
     
-  return isLocal ? `http://${hostname}:5000/api` : 'https://disciplinex-laxc.onrender.com/api';
+  return isLocal ? `http://${hostname}:5000/api` : 'https://disciplinex-production.up.railway.app/api';
 };
 
 const API_BASE = getApiBase();
 
-// Production Render free-tier can take 50-90s to cold-start; local should be fast
+// Production Railway responds instantly; local should be fast
 const isLocalApi = API_BASE.includes('localhost') || API_BASE.includes('127.0.0.1') || API_BASE.includes('192.168.');
 const REQUEST_TIMEOUT = isLocalApi ? 15000 : 90000; // 15s local, 90s production
 
