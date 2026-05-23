@@ -12,7 +12,22 @@ const CAPTCHA_SECRET = process.env.JWT_SECRET || 'disciplinex_captcha_secret_123
  * Protects against XSS and MongoDB Query Injection
  */
 export const sanitizeRequest = (req, res, next) => {
-  const sanitizeValue = (val) => {
+  const sanitizeValue = (val, key = null) => {
+    // Skip sanitizing password, code, and token fields to prevent corruption of special characters
+    const skippedKeys = [
+      'password', 
+      'confirmPassword', 
+      'newPassword', 
+      'token', 
+      'emailVerificationToken', 
+      'resetToken',
+      'otp',
+      'code'
+    ];
+    if (key && skippedKeys.includes(key)) {
+      return val;
+    }
+
     if (typeof val === 'string') {
       // Prevent MongoDB operator injection (strip starting $)
       let cleaned = val;
@@ -32,13 +47,13 @@ export const sanitizeRequest = (req, res, next) => {
     
     if (val && typeof val === 'object') {
       if (Array.isArray(val)) {
-        return val.map(sanitizeValue);
+        return val.map(item => sanitizeValue(item, key));
       }
       const sanitizedObj = {};
-      for (const key of Object.keys(val)) {
+      for (const k of Object.keys(val)) {
         // Prevent key-based injection by omitting keys starting with $
-        if (!key.startsWith('$')) {
-          sanitizedObj[key] = sanitizeValue(val[key]);
+        if (!k.startsWith('$')) {
+          sanitizedObj[k] = sanitizeValue(val[k], k);
         }
       }
       return sanitizedObj;

@@ -118,6 +118,13 @@ export const Login = () => {
       // Clean up URL query parameter without reloading page
       window.history.replaceState({}, document.title, window.location.pathname);
     }
+
+    // Pre-warm: silently ping the backend health endpoint to wake up Render from cold sleep
+    // By the time the user types their email + password, the server should be fully awake
+    fetch(API_BASE.replace('/api', '/api/health'), { method: 'GET', mode: 'cors' })
+      .then(r => r.json())
+      .then(d => console.log('[Pre-warm] Backend is awake:', d.status, d.databaseMode))
+      .catch(() => console.log('[Pre-warm] Backend ping sent (server may be waking up).'));
   }, []);
 
   // Safety-net: forcefully reset loading state after 100 seconds to prevent permanent freeze

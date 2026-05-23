@@ -100,6 +100,7 @@ const request = async (endpoint, options = {}) => {
   }
 };
 
+export { API_BASE };
 export const api = {
   get: (endpoint, options) => request(endpoint, { method: 'GET', ...options }),
   post: (endpoint, body, options) => request(endpoint, { method: 'POST', body, ...options }),
