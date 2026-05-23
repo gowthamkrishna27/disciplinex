@@ -1,6 +1,13 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import dns from 'dns';
+
+// Force DNS resolution to prefer IPv4 over IPv6 in cloud environments
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
+
 import { connectDB, checkFallback } from './config/db.js';
 
 // Load Environment variables
