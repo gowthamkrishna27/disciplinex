@@ -46,7 +46,7 @@ const getTransporter = async () => {
   return null;
 };
 
-export const sendVerificationEmail = async (toEmail, verifyCode) => {
+export const sendVerificationEmail = async (toEmail, verifyUrl) => {
   try {
     const transporter = await getTransporter();
     
@@ -58,13 +58,12 @@ export const sendVerificationEmail = async (toEmail, verifyCode) => {
 
 Consistency over intensity.
 
-Thank you for creating an account with DisciplineX. To start tracking your habits, routines, and scheduling your productivity milestones, please verify your email address by entering the 6-digit verification code (OTP) below on the registration screen:
+Thank you for creating an account with DisciplineX. To start tracking your habits, routines, and scheduling your productivity milestones, please verify your email address by clicking the secure link below:
 
-------------------------
-${verifyCode}
-------------------------
+Verify Email Address:
+${verifyUrl}
 
-This code is valid for 5 minutes.
+If the link does not open, please copy and paste it into your browser's address bar.
 
 If you did not request this verification, please ignore this email.
 

@@ -177,8 +177,8 @@ export const registerUser = async (req, res) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
 
-    // Generate verification 6-digit code (expires in 5 minutes)
-    const verificationToken = Math.floor(100000 + Math.random() * 900000).toString();
+    // Generate verification token (expires in 5 minutes)
+    const verificationToken = crypto.randomBytes(32).toString('hex');
     const verificationExpires = new Date(Date.now() + 5 * 60 * 1000);
 
     // Create user
@@ -206,15 +206,20 @@ export const registerUser = async (req, res) => {
     }
 
     if (user) {
-      // Dispatch real or Ethereal email
-      const emailResult = await sendVerificationEmail(user.email, verificationToken);
+      // Build verification URL dynamically based on request host and protocol
+      const host = req.get('host');
+      const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+      const verifyUrl = `${protocol}://${host}/api/auth/verify-email?token=${verificationToken}`;
 
-      let message = 'Account created! A 6-digit verification code has been dispatched to your email address. Please check your inbox and enter the code to verify your account.';
+      // Dispatch real or Ethereal email
+      const emailResult = await sendVerificationEmail(user.email, verifyUrl);
+
+      let message = 'Account created! A verification link has been dispatched to your email address. Please check your email to verify your account.';
       if (emailResult && emailResult.previewUrl) {
-        message = `Account created! A verification code has been sent to Ethereal Mail. Please check your simulated mailbox here: ${emailResult.previewUrl} (Code: ${verificationToken})`;
+        message = `Account created! A verification link has been sent to Ethereal Mail. Please check your simulated mailbox here: ${emailResult.previewUrl}`;
       } else if (!emailResult || !emailResult.success) {
         // Fallback for data center network blocks on SMTP ports
-        message = `Account created! However, our email service is currently experiencing connection restrictions in this hosting environment. You can verify your account immediately by entering this secure verification code: ${verificationToken}`;
+        message = `Account created! However, our email service is currently experiencing connection restrictions in this hosting environment. You can verify your account immediately by clicking this secure link: ${verifyUrl}`;
       }
 
       res.status(201).json({

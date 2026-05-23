@@ -194,9 +194,8 @@ export const Login = () => {
       try {
         const resData = await signup(name, email, password);
         console.log('[Login] Signup response received:', resData);
-        setVerificationEmail(email);
-        setSuccessMessage(resData?.message || 'Account created successfully! Please check your email for the verification code.');
-        setView('verify-email-code');
+        setSuccessMessage(resData?.message || 'Account created successfully! Please check your email to verify your account.');
+        setView('login');
         setPassword('');
         setName('');
       } catch (err) {
