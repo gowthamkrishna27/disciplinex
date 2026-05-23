@@ -95,10 +95,29 @@ const UserSchema = new mongoose.Schema({
       },
     }
   ],
+  isVerified: {
+    type: Boolean,
+    default: false,
+  },
+  emailVerificationToken: {
+    type: String,
+    default: null,
+  },
+  emailVerificationExpires: {
+    type: Date,
+    default: null,
+  },
+  lastVerificationSentAt: {
+    type: Date,
+    default: null,
+  },
   createdAt: {
     type: Date,
     default: Date.now,
   },
 });
+
+// TTL index to automatically purge unverified users from MongoDB after their verification window expires
+UserSchema.index({ emailVerificationExpires: 1 }, { expireAfterSeconds: 0 });
 
 export default mongoose.model('User', UserSchema);

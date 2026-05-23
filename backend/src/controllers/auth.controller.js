@@ -6,11 +6,18 @@ import { checkFallback } from '../config/db.js';
 import User from '../models/User.js';
 import { JsonDb } from '../models/fallback/jsonDb.js';
 import { generateCaptcha, verifyCaptcha } from '../middleware/security.js';
+import { sendVerificationEmail, sendOtpEmail, sendResetCodeEmail, testSmtpConnection } from '../utils/email.js';
 
 // Load JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET || 'disciplinex_super_secret_key_123_456';
 const CAPTCHA_SECRET = process.env.JWT_SECRET || 'disciplinex_captcha_secret_123_456';
 const isProd = process.env.NODE_ENV === 'production';
+
+// Hash token helper using SHA-256 for secure database storage
+const hashToken = (token) => {
+  if (!token) return null;
+  return crypto.createHash('sha256').update(token).digest('hex');
+};
 
 // Device Name Parser Helper
 const getDeviceName = (userAgent) => {
@@ -79,7 +86,7 @@ const verifyTOTP = (secret, token, window = 1) => {
       ) % 1000000;
       
       const paddedCode = code.toString().padStart(6, '0');
-      if (paddedCode === token) {
+      if (paddedCode === String(token)) {
         return true;
       }
     }
@@ -133,6 +140,12 @@ export const registerUser = async (req, res) => {
     return res.status(400).json({ message: 'Please add all required fields' });
   }
 
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+
   // Password strength check (min 8 chars, 1 number, 1 special character)
   const passwordRegex = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[@$!%*#?&])[A-Za-z\d@$!%*#?&]{8,}$/;
   if (!passwordRegex.test(password)) {
@@ -152,12 +165,28 @@ export const registerUser = async (req, res) => {
     }
 
     if (userExists) {
-      return res.status(400).json({ message: 'User already exists with this email' });
+      if (userExists.isVerified) {
+        return res.status(400).json({ message: 'User already exists with this email' });
+      } else {
+        // If the user exists but is NOT verified, delete the old unverified record
+        // so we can register them fresh and send/display a new verification link
+        console.log(`[Auth Controller] Deleting unverified duplicate user record for: ${email}`);
+        if (isFallback) {
+          JsonDb.deleteUser(userExists._id);
+        } else {
+          await User.deleteOne({ _id: userExists._id });
+        }
+      }
     }
 
     // Hash password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Generate verification token (expires in 5 minutes)
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = hashToken(verificationToken);
+    const verificationExpires = new Date(Date.now() + 5 * 60 * 1000);
 
     // Create user
     let user;
@@ -171,7 +200,11 @@ export const registerUser = async (req, res) => {
       twoFactorEnabled: false,
       trustedDevices: [],
       activeSessions: [],
-      webAuthnCredentials: []
+      webAuthnCredentials: [],
+      isVerified: false,
+      emailVerificationToken: hashedToken,
+      emailVerificationExpires: verificationExpires,
+      lastVerificationSentAt: new Date()
     };
 
     if (isFallback) {
@@ -181,12 +214,26 @@ export const registerUser = async (req, res) => {
     }
 
     if (user) {
+      // Build verification URL dynamically based on request host and protocol
+      const host = req.get('host');
+      const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+      const verifyUrl = `${protocol}://${host}/api/auth/verify-email?token=${verificationToken}`;
+
+      // Dispatch real or Ethereal email
+      const emailResult = await sendVerificationEmail(user.email, verifyUrl);
+
+      let message = 'Account created! A verification link has been dispatched to your email address. Please check your email inbox (and spam folder) to verify your account.';
+      if (emailResult && emailResult.previewUrl) {
+        message = `Account created! A verification link has been sent to Ethereal Mail. Please check your simulated mailbox here: ${emailResult.previewUrl}`;
+      }
+
+
       res.status(201).json({
         _id: user._id,
         name: user.name,
         email: user.email,
         dailyGoal: user.dailyGoal,
-        message: 'Account created successfully! Please sign in.'
+        message
       });
     } else {
       res.status(400).json({ message: 'Invalid user data provided' });
@@ -205,6 +252,12 @@ export const loginUser = async (req, res) => {
 
   if (!email || !password) {
     return res.status(400).json({ message: 'Please include email and password' });
+  }
+
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
   }
 
   try {
@@ -229,6 +282,26 @@ export const loginUser = async (req, res) => {
       const minutesLeft = Math.ceil((new Date(user.lockoutUntil) - now) / 60000);
       return res.status(423).json({
         message: `Account is temporarily locked due to excessive failed attempts. Please try again in ${minutesLeft} minute(s).`
+      });
+    }
+
+    // Email verification status check (block if explicitly false, skip if undefined for pre-seeded legacy test accounts)
+    if (user.isVerified === false) {
+      if (user.emailVerificationExpires && new Date(user.emailVerificationExpires).getTime() < now.getTime()) {
+        // Delete expired unverified details
+        if (isFallback) {
+          JsonDb.deleteUser(user._id);
+        } else {
+          await User.deleteOne({ _id: user._id });
+        }
+        return res.status(401).json({
+          message: 'Your email verification window (5 minutes) has expired and your details were removed. Please register again.'
+        });
+      }
+
+      return res.status(403).json({
+        message: 'Your email address has not been verified yet. Please check your email inbox (and spam folder) for the verification link.',
+        notVerified: true
       });
     }
 
@@ -346,18 +419,18 @@ export const loginUser = async (req, res) => {
 
     // 2FA Verification Triggers
     if (user.twoFactorEnabled && !deviceBypassed) {
-      // Create short-lived 2FA authorization token (expires in 5 mins)
+      // Create short-lived 2FA authorization token (expires in 15 mins)
       const tempToken = jwt.sign(
         { tempUserId: user._id, action: '2fa_pending' },
         JWT_SECRET,
-        { expiresIn: '5m' }
+        { expiresIn: '15m' }
       );
 
       if (user.twoFactorMethod === 'email') {
         // Generate and store email OTP
         const otpCode = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digits
         user.emailOtp = otpCode;
-        user.emailOtpExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
+        user.emailOtpExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
 
         if (isFallback) {
           JsonDb.updateUser(user._id, {
@@ -372,11 +445,18 @@ export const loginUser = async (req, res) => {
           await user.save();
         }
 
-        // Print Simulated Email Delivery log
+        // Dispatch real or Ethereal 2FA OTP Email
+        const emailResult = await sendOtpEmail(user.email, otpCode);
+
+        // Print Simulated/Ethereal Email Delivery log
         console.log(`\n======================================================================`);
-        console.log(`[SIMULATED MAIL SERVER] Delivery to: ${user.email}`);
+        console.log(`[MAIL SERVER] 2FA OTP Delivery to: ${user.email}`);
         console.log(`[DisciplineX OTP CODE] Code: ${otpCode}`);
+        if (emailResult && emailResult.previewUrl) {
+          console.log(`[ETHEREAL MAILBOX] Link: ${emailResult.previewUrl}`);
+        }
         console.log(`======================================================================\n`);
+
 
         return res.json({
           require2FA: true,
@@ -420,6 +500,18 @@ export const loginUser = async (req, res) => {
       });
     } else {
       await user.save();
+    }
+
+    // Dispatch Security Alert Email in background to never block response
+    try {
+      sendSecurityAlertEmail(user.email, {
+        eventName: 'New Active Session Authorized',
+        deviceName,
+        ipAddress: user.lastLoginIp || 'Unknown IP',
+        timestamp: new Date()
+      });
+    } catch (alertErr) {
+      console.warn('[Login Alert] Failed to dispatch alert email:', alertErr.message);
     }
 
     // Set secure HTTP-only cookie
@@ -480,7 +572,7 @@ export const verifyTwoFactor = async (req, res) => {
     // Verify Email OTP code
     if (user.twoFactorMethod === 'email') {
       const now = new Date();
-      if (user.emailOtp === otp && new Date(user.emailOtpExpires) > now) {
+      if (user.emailOtp && String(user.emailOtp) === String(otp) && new Date(user.emailOtpExpires).getTime() > now.getTime()) {
         isCodeValid = true;
         // Wipe OTP values once verified
         user.emailOtp = null;
@@ -571,6 +663,12 @@ export const requestReset = async (req, res) => {
     return res.status(400).json({ message: 'Please specify your email address' });
   }
 
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+
   try {
     const isFallback = checkFallback();
     let user;
@@ -587,7 +685,8 @@ export const requestReset = async (req, res) => {
 
     // Generate secure 6-digit reset code
     const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-    user.resetPasswordToken = resetCode;
+    const hashedResetCode = hashToken(resetCode);
+    user.resetPasswordToken = hashedResetCode;
     user.resetPasswordExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
 
     if (isFallback) {
@@ -599,11 +698,18 @@ export const requestReset = async (req, res) => {
       await user.save();
     }
 
-    // Print Simulated Reset Email Delivery log
+    // Dispatch real or Ethereal Password Reset Email
+    const emailResult = await sendResetCodeEmail(user.email, resetCode);
+
+    // Print Simulated/Ethereal Reset Email Delivery log
     console.log(`\n======================================================================`);
-    console.log(`[SIMULATED MAIL SERVER] Password Reset for: ${user.email}`);
+    console.log(`[MAIL SERVER] Password Reset for: ${user.email}`);
     console.log(`[DisciplineX PASSWORD RESET] Code: ${resetCode}`);
+    if (emailResult && emailResult.previewUrl) {
+      console.log(`[ETHEREAL MAILBOX] Link: ${emailResult.previewUrl}`);
+    }
     console.log(`======================================================================\n`);
+
 
     res.json({ message: 'If the email matches an active account, a reset code has been dispatched.' });
   } catch (error) {
@@ -644,7 +750,8 @@ export const executeReset = async (req, res) => {
     }
 
     const now = new Date();
-    if (user.resetPasswordToken !== code || new Date(user.resetPasswordExpires) < now) {
+    const hashedIncomingCode = hashToken(code);
+    if (!user.resetPasswordToken || user.resetPasswordToken !== hashedIncomingCode || new Date(user.resetPasswordExpires).getTime() < now.getTime()) {
       return res.status(400).json({ message: 'Reset code is invalid or has expired.' });
     }
 
@@ -804,7 +911,7 @@ export const setupTwoFactor = async (req, res) => {
       // Generate a quick verification OTP
       const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
       user.emailOtp = otpCode;
-      user.emailOtpExpires = new Date(Date.now() + 5 * 60 * 1000);
+      user.emailOtpExpires = new Date(Date.now() + 15 * 60 * 1000);
 
       if (isFallback) {
         JsonDb.updateUser(user._id, {
@@ -815,10 +922,17 @@ export const setupTwoFactor = async (req, res) => {
         await user.save();
       }
 
+      // Dispatch real or Ethereal 2FA OTP Setup Email
+      const emailResult = await sendOtpEmail(user.email, otpCode);
+
       console.log(`\n======================================================================`);
-      console.log(`[SIMULATED MAIL SERVER] Enable 2FA Verification for: ${user.email}`);
+      console.log(`[MAIL SERVER] Enable 2FA Verification for: ${user.email}`);
       console.log(`[DisciplineX OTP CODE] Verification Code: ${otpCode}`);
+      if (emailResult && emailResult.previewUrl) {
+        console.log(`[ETHEREAL MAILBOX] Link: ${emailResult.previewUrl}`);
+      }
       console.log(`======================================================================\n`);
+
 
       return res.json({
         tempSetup: true,
@@ -893,7 +1007,7 @@ export const confirmTwoFactor = async (req, res) => {
 
     if (method === 'email') {
       const now = new Date();
-      if (user.emailOtp === code && new Date(user.emailOtpExpires) > now) {
+      if (user.emailOtp && String(user.emailOtp) === String(code) && new Date(user.emailOtpExpires).getTime() > now.getTime()) {
         isCodeValid = true;
         user.emailOtp = null;
         user.emailOtpExpires = null;
@@ -1036,6 +1150,12 @@ export const getBiometricLoginOptions = async (req, res) => {
     return res.status(400).json({ message: 'Please specify your email address' });
   }
 
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+
   try {
     const isFallback = checkFallback();
     let user;
@@ -1071,6 +1191,12 @@ export const verifyBiometricLogin = async (req, res) => {
 
   if (!email || !credentialId) {
     return res.status(400).json({ message: 'Biometric authentication details missing.' });
+  }
+
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
   }
 
   try {
@@ -1207,3 +1333,333 @@ export const updateProfile = async (req, res) => {
     res.status(500).json({ message: 'Server error updating profile', error: error.message });
   }
 };
+
+/**
+ * 16. Verify Email Address via Token
+ */
+export const verifyEmail = async (req, res) => {
+  const { token } = req.query;
+  const host = req.get('host') || '';
+  const isLocal = host.includes('localhost') || host.includes('127.0.0.1');
+  const clientUrl = isLocal ? 'http://localhost:5173' : 'https://disciplinex-tau.vercel.app';
+
+  if (!token) {
+    return res.status(400).send(`
+      <html>
+        <head>
+          <title>Email Verification Failed — DisciplineX</title>
+          <style>
+            body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #f8fafc; text-align: center; padding: 100px 20px; margin: 0; }
+            .card { background: #111827; border: 1px solid #1f2937; border-radius: 24px; padding: 48px; display: inline-block; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); max-width: 480px; }
+            .icon { font-size: 64px; color: #ef4444; margin-bottom: 24px; }
+            h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px 0; color: #ef4444; }
+            p { font-size: 15px; color: #9ca3af; line-height: 1.6; margin: 0 0 32px 0; }
+            .btn { display: inline-block; background: #6d28d9; color: white; padding: 12px 32px; border-radius: 12px; font-size: 14px; font-weight: 600; text-decoration: none; transition: background 0.2s; }
+            .btn:hover { background: #5b21b6; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div class="icon">❌</div>
+            <h1>Verification Failed</h1>
+            <p>Verification token is missing or has expired.</p>
+            <a href="${clientUrl}/login" class="btn">Go to Login</a>
+          </div>
+        </body>
+      </html>
+    `);
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    const hashedToken = hashToken(token);
+
+    if (isFallback) {
+      user = JsonDb.findUserByVerificationToken(hashedToken);
+    } else {
+      user = await User.findOne({ emailVerificationToken: hashedToken });
+    }
+
+    if (!user) {
+      return res.status(404).send(`
+        <html>
+          <head>
+            <title>Email Verification Failed — DisciplineX</title>
+            <style>
+              body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #f8fafc; text-align: center; padding: 100px 20px; margin: 0; }
+              .card { background: #111827; border: 1px solid #1f2937; border-radius: 24px; padding: 48px; display: inline-block; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); max-width: 480px; }
+              .icon { font-size: 64px; color: #ef4444; margin-bottom: 24px; }
+              h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px 0; color: #ef4444; }
+              p { font-size: 15px; color: #9ca3af; line-height: 1.6; margin: 0 0 32px 0; }
+              .btn { display: inline-block; background: #6d28d9; color: white; padding: 12px 32px; border-radius: 12px; font-size: 14px; font-weight: 600; text-decoration: none; transition: background 0.2s; }
+              .btn:hover { background: #5b21b6; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="icon">❌</div>
+              <h1>Verification Link Invalid</h1>
+              <p>The verification link is invalid, expired, or has already been used.</p>
+              <a href="${clientUrl}/login" class="btn">Go to Login</a>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    // Check expiration
+    const now = new Date();
+    if (user.emailVerificationExpires && new Date(user.emailVerificationExpires).getTime() < now.getTime()) {
+      // Delete unverified user details from database since verification expired
+      if (isFallback) {
+        JsonDb.deleteUser(user._id);
+      } else {
+        await User.deleteOne({ _id: user._id });
+      }
+
+      return res.status(400).send(`
+        <html>
+          <head>
+            <title>Verification Link Expired — DisciplineX</title>
+            <style>
+              body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #f8fafc; text-align: center; padding: 100px 20px; margin: 0; }
+              .card { background: #111827; border: 1px solid #1f2937; border-radius: 24px; padding: 48px; display: inline-block; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); max-width: 480px; }
+              .icon { font-size: 64px; color: #ea580c; margin-bottom: 24px; }
+              h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px 0; color: #ea580c; }
+              p { font-size: 15px; color: #9ca3af; line-height: 1.6; margin: 0 0 32px 0; }
+              .btn { display: inline-block; background: #6d28d9; color: white; padding: 12px 32px; border-radius: 12px; font-size: 14px; font-weight: 600; text-decoration: none; transition: background 0.2s; }
+              .btn:hover { background: #5b21b6; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <div class="icon">⏳</div>
+              <h1>Verification Expired</h1>
+              <p>The verification link has expired (validity is 5 minutes). Please register again.</p>
+              <a href="${clientUrl}/login" class="btn">Go to Login</a>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+
+    // Success: Verify User
+    user.isVerified = true;
+    user.emailVerificationToken = null;
+    user.emailVerificationExpires = null;
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        isVerified: true,
+        emailVerificationToken: null,
+        emailVerificationExpires: null
+      });
+    } else {
+      await user.save();
+    }
+
+    // Success Screen with redirect
+    res.send(`
+      <html>
+        <head>
+          <title>Email Verified Successfully — DisciplineX</title>
+          <meta http-equiv="refresh" content="4;url=${clientUrl}/login?verified=true" />
+          <style>
+            body { font-family: 'Segoe UI', system-ui, sans-serif; background: #0b0f19; color: #f8fafc; text-align: center; padding: 100px 20px; margin: 0; }
+            .card { background: #111827; border: 1px solid #1f2937; border-radius: 24px; padding: 48px; display: inline-block; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1); max-width: 480px; }
+            .icon { font-size: 64px; color: #10b981; margin-bottom: 24px; }
+            h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px 0; color: #10b981; }
+            p { font-size: 15px; color: #9ca3af; line-height: 1.6; margin: 0 0 32px 0; }
+            .btn { display: inline-block; background: #10b981; color: white; padding: 12px 32px; border-radius: 12px; font-size: 14px; font-weight: 600; text-decoration: none; transition: background 0.2s; }
+            .btn:hover { background: #059669; }
+            .timer { font-size: 12px; color: #6b7280; margin-top: 16px; }
+          </style>
+        </head>
+        <body>
+          <div class="card">
+            <div class="icon">✅</div>
+            <h1>Email Verified!</h1>
+            <p>Your email address has been successfully verified. You will be redirected to the login page shortly.</p>
+            <a href="${clientUrl}/login?verified=true" class="btn">Proceed to Login</a>
+            <p class="timer">Auto-redirecting in a few seconds...</p>
+          </div>
+        </body>
+      </html>
+    `);
+
+  } catch (error) {
+    console.error('[Email Verification Error]', error);
+    res.status(500).send('Server error during email verification.');
+  }
+};
+
+/**
+ * 17. Resend Verification Email Link with Cooldown Check
+ */
+export const resendVerificationEmailCode = async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: 'Please specify your email address' });
+  }
+
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserByEmail(email);
+    } else {
+      user = await User.findOne({ email });
+    }
+
+    if (!user) {
+      return res.status(444).json({ message: 'No registration record found for this email address.' });
+    }
+
+    if (user.isVerified) {
+      return res.status(400).json({ message: 'This account has already been verified. Please sign in.' });
+    }
+
+    // Cooldown check (60 seconds)
+    const now = new Date();
+    if (user.lastVerificationSentAt && (now.getTime() - new Date(user.lastVerificationSentAt).getTime() < 60000)) {
+      const secondsLeft = Math.ceil((60000 - (now.getTime() - new Date(user.lastVerificationSentAt).getTime())) / 1000);
+      return res.status(429).json({
+        message: `Please wait ${secondsLeft} second(s) before requesting another verification email.`
+      });
+    }
+
+    // Generate fresh verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = hashToken(verificationToken);
+    const verificationExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
+
+    user.emailVerificationToken = hashedToken;
+    user.emailVerificationExpires = verificationExpires;
+    user.lastVerificationSentAt = now;
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        emailVerificationToken: user.emailVerificationToken,
+        emailVerificationExpires: user.emailVerificationExpires,
+        lastVerificationSentAt: user.lastVerificationSentAt
+      });
+    } else {
+      await user.save();
+    }
+
+    // Build URL
+    const host = req.get('host');
+    const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+    const verifyUrl = `${protocol}://${host}/api/auth/verify-email?token=${verificationToken}`;
+
+    // Dispatch
+    const emailResult = await sendVerificationEmail(user.email, verifyUrl);
+
+    let message = 'A fresh verification link has been dispatched to your email address. Please check your email inbox (and spam folder).';
+    if (emailResult && emailResult.previewUrl) {
+      message = `A fresh verification link has been sent to Ethereal Mail: ${emailResult.previewUrl}`;
+    }
+
+
+    res.json({ message });
+
+  } catch (error) {
+    console.error('[Resend Verification Error]', error);
+    res.status(500).json({ message: 'Failed to resend verification email.', error: error.message });
+  }
+};
+
+/**
+ * 12. Verify Email OTP Code
+ */
+export const verifyEmailCode = async (req, res) => {
+  const { email, code } = req.body;
+
+  if (!email || !code) {
+    return res.status(400).json({ message: 'Email and verification code are required.' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+
+    if (isFallback) {
+      user = JsonDb.findUserByEmail(email);
+    } else {
+      user = await User.findOne({ email });
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User record not found.' });
+    }
+
+    if (user.isVerified) {
+      return res.json({ message: 'Account is already verified.' });
+    }
+
+    // Check expiration
+    const now = new Date();
+    if (user.emailVerificationExpires && new Date(user.emailVerificationExpires).getTime() < now.getTime()) {
+      // Delete unverified user details since verification expired
+      if (isFallback) {
+        JsonDb.deleteUser(user._id);
+      } else {
+        await User.deleteOne({ _id: user._id });
+      }
+      return res.status(400).json({
+        message: 'The verification code has expired (5-minute validity window). Please register again.'
+      });
+    }
+
+    // Verify code matches (as string comparison)
+    if (!user.emailVerificationToken || String(user.emailVerificationToken) !== String(code)) {
+      return res.status(400).json({ message: 'Invalid verification code. Please try again.' });
+    }
+
+    // Success: Verify User
+    user.isVerified = true;
+    user.emailVerificationToken = null;
+    user.emailVerificationExpires = null;
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        isVerified: true,
+        emailVerificationToken: null,
+        emailVerificationExpires: null
+      });
+    } else {
+      await user.save();
+    }
+
+    res.json({ message: 'Email verified successfully! You can now log in.' });
+
+  } catch (error) {
+    console.error('[Email Code Verification Error]', error);
+    res.status(500).json({ message: 'Server error during code verification.', error: error.message });
+  }
+};
+
+/**
+ * 18. SMTP Diagnostics Endpoint
+ */
+export const testSmtp = async (req, res) => {
+  try {
+    const results = await testSmtpConnection();
+    res.json(results);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Failed to run SMTP diagnostics.',
+      error: error.message
+    });
+  }
+};
+

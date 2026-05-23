@@ -5,6 +5,8 @@
     "dailyGoal": 4,
     "name": "gowtham",
     "email": "gowthamkrishna18v@gmail.com",
-    "password": "$2a$10$.wr/ejPOg5evwXsYmCG3MOk849Fz8.UJ/C2kuFxKJ9pNesZGV5RUS"
+    "password": "$2a$10$.wr/ejPOg5evwXsYmCG3MOk849Fz8.UJ/C2kuFxKJ9pNesZGV5RUS",
+    "resetPasswordToken": "267221",
+    "resetPasswordExpires": "2026-05-22T12:06:20.973Z"
   }
 ]

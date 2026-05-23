@@ -159,7 +159,7 @@ export const AddSchedule = () => {
                 type="date"
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
-                className="w-full bg-zinc-50 dark:bg-zinc-850 border border-border-light dark:border-border-dark rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple text-zinc-800 dark:text-zinc-200"
+                className="w-full bg-zinc-50 dark:bg-zinc-800 border border-border-light dark:border-border-dark rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple text-zinc-800 dark:text-zinc-200"
               />
             </div>
 
@@ -186,7 +186,7 @@ export const AddSchedule = () => {
                   placeholder="e.g. Study Chemistry / Practice Guitar"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
-                  className="w-full bg-zinc-50 dark:bg-zinc-850 border border-border-light dark:border-border-dark rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple text-zinc-900 dark:text-white"
+                  className="w-full bg-zinc-50 dark:bg-zinc-800 border border-border-light dark:border-border-dark rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple text-zinc-900 dark:text-white"
                   required
                 />
               </div>
@@ -200,7 +200,7 @@ export const AddSchedule = () => {
                     type="time" 
                     value={startTime}
                     onChange={(e) => setStartTime(e.target.value)}
-                    className="w-full bg-zinc-50 dark:bg-zinc-850 border border-border-light dark:border-border-dark rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple text-zinc-900 dark:text-white"
+                    className="w-full bg-zinc-50 dark:bg-zinc-800 border border-border-light dark:border-border-dark rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple text-zinc-900 dark:text-white"
                     required
                   />
                 </div>
@@ -212,7 +212,7 @@ export const AddSchedule = () => {
                     type="time" 
                     value={endTime}
                     onChange={(e) => setEndTime(e.target.value)}
-                    className="w-full bg-zinc-50 dark:bg-zinc-850 border border-border-light dark:border-border-dark rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple text-zinc-900 dark:text-white"
+                    className="w-full bg-zinc-50 dark:bg-zinc-800 border border-border-light dark:border-border-dark rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple text-zinc-900 dark:text-white"
                     required
                   />
                 </div>

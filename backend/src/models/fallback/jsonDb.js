@@ -44,6 +44,11 @@ export const JsonDb = {
     return users.find(u => u.email.toLowerCase() === email.toLowerCase());
   },
 
+  findUserByVerificationToken: (token) => {
+    const users = readData('users');
+    return users.find(u => u.emailVerificationToken === token);
+  },
+
   findUserById: (id) => {
     const users = readData('users');
     return users.find(u => u._id === id);
@@ -67,6 +72,9 @@ export const JsonDb = {
       resetPasswordExpires: null,
       lastLoginAt: null,
       lastLoginIp: null,
+      isVerified: false,
+      emailVerificationToken: null,
+      emailVerificationExpires: null,
       trustedDevices: [],
       activeSessions: [],
       webAuthnCredentials: [],
@@ -84,6 +92,14 @@ export const JsonDb = {
     users[index] = { ...users[index], ...updateData };
     writeData('users', users);
     return users[index];
+  },
+
+  deleteUser: (id) => {
+    const users = readData('users');
+    const filtered = users.filter(u => u._id !== id);
+    if (users.length === filtered.length) return false;
+    writeData('users', filtered);
+    return true;
   },
 
   // Schedules (Tasks) CRUD

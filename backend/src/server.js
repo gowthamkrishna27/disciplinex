@@ -1,6 +1,13 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import dns from 'dns';
+
+// Force DNS resolution to prefer IPv4 over IPv6 in cloud environments
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
+
 import { connectDB, checkFallback } from './config/db.js';
 
 // Load Environment variables
@@ -31,6 +38,17 @@ app.use(cors({
   },
   credentials: true
 }));
+
+// Lightweight HTTP Request Logger Middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[HTTP] ${req.method} ${req.originalUrl} - Status: ${res.statusCode} (${duration}ms) - Origin: ${req.headers.origin || 'None'}`);
+  });
+  next();
+});
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(sanitizeRequest);
@@ -77,10 +95,10 @@ app.use((err, req, res, next) => {
 
 // Listen on Port
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n--------------------------------------------------------------`);
   console.log(`[DisciplineX Server] Server is running in ${process.env.NODE_ENV || 'development'} mode`);
-  console.log(`[DisciplineX Server] Local API URL: http://localhost:${PORT}`);
+  console.log(`[DisciplineX Server] Local API URL: http://0.0.0.0:${PORT} (listening on all interfaces)`);
   console.log(`[DisciplineX Server] Health check endpoint: http://localhost:${PORT}/api/health`);
   console.log(`--------------------------------------------------------------\n`);
 });

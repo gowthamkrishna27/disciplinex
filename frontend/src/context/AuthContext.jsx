@@ -135,6 +135,28 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const verifyEmailCode = async (email, code) => {
+    setError(null);
+    try {
+      const data = await api.post('/auth/verify-code', { email, code });
+      return data;
+    } catch (err) {
+      setError(err.message || 'Verification failed');
+      throw err;
+    }
+  };
+
+  const resendVerification = async (email) => {
+    setError(null);
+    try {
+      const data = await api.post('/auth/resend-verification', { email });
+      return data;
+    } catch (err) {
+      setError(err.message || 'Resend verification failed');
+      throw err;
+    }
+  };
+
   const logout = (reason = null) => {
     localStorage.removeItem('token');
     setUser(null);
@@ -254,6 +276,14 @@ export const AuthProvider = ({ children }) => {
       throw new Error('Please specify email address');
     }
 
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setBiometricStatus('failed');
+      setBiometricMessage('Please enter a valid email address.');
+      setTimeout(() => setBiometricStatus('idle'), 2500);
+      throw new Error('Please enter a valid email address.');
+    }
+
     try {
       const options = await api.post('/auth/webauthn/login-options', { email });
       
@@ -341,6 +371,8 @@ export const AuthProvider = ({ children }) => {
       error, 
       login, 
       signup, 
+      verifyEmailCode,
+      resendVerification,
       logout, 
       updateUserProfile, 
       setError,
