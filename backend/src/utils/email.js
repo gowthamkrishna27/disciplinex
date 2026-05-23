@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import dns from 'dns';
 
 let testAccount = null;
 
@@ -9,18 +10,39 @@ const getTransporter = async () => {
     // Auto-enable SSL/TLS if port is 465 or SMTP_SECURE is explicitly true
     const secure = port === 465 || process.env.SMTP_SECURE === 'true';
 
+    let resolvedHost = process.env.SMTP_HOST;
+    const tlsConfig = {};
+
+    // For cloud environments (like Railway) experiencing IPv6 ENETUNREACH issues,
+    // we pre-resolve the hostname to a pure IPv4 address using dns.resolve4.
+    try {
+      const isIp = /^[0-9.]+$/.test(resolvedHost) || resolvedHost.includes(':');
+      if (!isIp) {
+        console.log(`[Email Service] Pre-resolving SMTP host ${resolvedHost} to IPv4...`);
+        const addresses = await dns.promises.resolve4(resolvedHost);
+        if (addresses && addresses.length > 0) {
+          resolvedHost = addresses[0];
+          tlsConfig.servername = process.env.SMTP_HOST;
+          console.log(`[Email Service] Successfully pre-resolved to IPv4 address: ${resolvedHost}`);
+        }
+      }
+    } catch (dnsErr) {
+      console.warn(`[Email Service] DNS IPv4 pre-resolution failed, falling back to hostname:`, dnsErr.message);
+    }
+
     return nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
+      host: resolvedHost,
       port,
       secure,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
       },
-      family: 4, // Force IPv4 to prevent ENETUNREACH over IPv6 in datacenter containers
+      tls: tlsConfig,
       connectionTimeout: 5000, // 5 seconds
       socketTimeout: 5000,     // 5 seconds
     });
+
 
   }
 
