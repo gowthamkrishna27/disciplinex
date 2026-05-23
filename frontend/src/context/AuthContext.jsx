@@ -123,11 +123,11 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const signup = async (name, email, password) => {
+  const signup = async (name, email, password, provider = null) => {
     setError(null);
     setInactivityLoggedOut(false);
     try {
-      const data = await api.post('/auth/signup', { name, email, password });
+      const data = await api.post('/auth/signup', { name, email, password, provider });
       if (data.token) {
         localStorage.setItem('token', data.token);
         setUser(data);

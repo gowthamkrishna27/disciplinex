@@ -100,8 +100,105 @@ export const Login = () => {
     resendVerification,
     verify2FA,
     inactivityLoggedOut,
-    setInactivityLoggedOut
+    setInactivityLoggedOut,
+    isDark
   } = useAuth();
+
+  const handleGoogleCredentialResponse = async (response) => {
+    setFormError('');
+    setSuccessMessage('');
+    setLoadingState(true);
+    setLoadingMessage('Authenticating with Google...');
+
+    try {
+      const idToken = response.credential;
+      const base64Url = idToken.split('.')[1];
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
+      }).join(''));
+
+      const profile = JSON.parse(jsonPayload);
+      const { email, name, sub: googleId } = profile;
+
+      console.log('[Google OAuth] Authenticated:', name, email);
+      const googlePassword = `google_oauth_fallback_sec_${googleId}_123!`;
+
+      try {
+        console.log('[Google OAuth] Attempting automatic login...');
+        await login(email, googlePassword);
+        console.log('[Google OAuth] Login successful!');
+      } catch (loginErr) {
+        console.log('[Google OAuth] User not registered. Registering with Google provider...');
+        try {
+          const signupRes = await signup(name, email, googlePassword, 'google');
+          console.log('[Google OAuth] Registration successful:', signupRes);
+        } catch (signupErr) {
+          throw new Error(signupErr.message || 'Failed to complete Google Sign-up.');
+        }
+      }
+    } catch (err) {
+      console.error('[Google OAuth] Error:', err);
+      setFormError(err.message || 'Google Authentication failed.');
+    } finally {
+      setLoadingState(false);
+    }
+  };
+
+  useEffect(() => {
+    const initializeGoogleSignIn = () => {
+      if (window.google) {
+        try {
+          window.google.accounts.id.initialize({
+            client_id: "866577965805-saof2fms48ppama7f06f45pb9j4ad3aa.apps.googleusercontent.com",
+            callback: handleGoogleCredentialResponse,
+          });
+          
+          const renderButtons = () => {
+            const btnEl = document.getElementById("googleSignInBtn");
+            if (btnEl) {
+              window.google.accounts.id.renderButton(btnEl, {
+                theme: isDark ? "filled_blue" : "outline",
+                size: "large",
+                width: 320,
+                text: view === 'signup' ? 'signup_with' : 'signin_with',
+                shape: "pill"
+              });
+            }
+          };
+
+          renderButtons();
+
+          // Observe view changes to re-render the button anchor when it mounts
+          const observer = new MutationObserver(() => {
+            renderButtons();
+          });
+          observer.observe(document.body, { childList: true, subtree: true });
+          
+          return () => observer.disconnect();
+        } catch (err) {
+          console.error('[Google OAuth] Init Error:', err);
+        }
+      }
+    };
+
+    const script = document.createElement('script');
+    script.src = 'https://accounts.google.com/gsi/client';
+    script.async = true;
+    script.defer = true;
+    script.onload = initializeGoogleSignIn;
+    document.body.appendChild(script);
+
+    if (window.google) {
+      initializeGoogleSignIn();
+    }
+
+    return () => {
+      try {
+        document.body.removeChild(script);
+      } catch (e) {}
+    };
+  }, [view, isDark]);
 
   // Evaluate password strength
   useEffect(() => {
@@ -605,6 +702,17 @@ export const Login = () => {
               </button>
             </form>
 
+            <div className="relative flex py-5 items-center">
+              <div className="flex-grow border-t border-border-light dark:border-border-dark"></div>
+              <span className="flex-shrink mx-4 text-zinc-400 text-xs uppercase tracking-wider font-semibold">Or</span>
+              <div className="flex-grow border-t border-border-light dark:border-border-dark"></div>
+            </div>
+
+            {/* Google Sign In Button Anchor */}
+            <div className="w-full flex justify-center py-1">
+              <div id="googleSignInBtn"></div>
+            </div>
+
             <div className="mt-8 pt-6 border-t border-border-light dark:border-border-dark text-center">
               <p className="text-xs text-color-text-muted-light dark:text-color-text-muted-dark">
                 Don't have an account yet?
@@ -735,11 +843,22 @@ export const Login = () => {
               <button
                 type="submit"
                 disabled={loadingState}
-                className="w-full mt-6 py-2.5 bg-brand-purple hover:bg-brand-purple/90 disabled:bg-brand-purple/50 text-white rounded-xl text-sm font-semibold transition cursor-pointer select-none card-shadow"
+                className="w-full mt-6 py-2.5 bg-brand-purple hover:bg-brand-purple/90 disabled:bg-brand-purple/50 text-white rounded-xl text-sm font-semibold transition cursor-pointer select-none card-shadow flex items-center justify-center gap-2"
               >
                 {loadingState ? loadingMessage : 'Create Account'}
               </button>
             </form>
+
+            <div className="relative flex py-5 items-center">
+              <div className="flex-grow border-t border-border-light dark:border-border-dark"></div>
+              <span className="flex-shrink mx-4 text-zinc-400 text-xs uppercase tracking-wider font-semibold">Or</span>
+              <div className="flex-grow border-t border-border-light dark:border-border-dark"></div>
+            </div>
+
+            {/* Google Sign In Button Anchor */}
+            <div className="w-full flex justify-center py-1">
+              <div id="googleSignInBtn"></div>
+            </div>
 
             <div className="mt-8 pt-6 border-t border-border-light dark:border-border-dark text-center">
               <p className="text-xs text-color-text-muted-light dark:text-color-text-muted-dark">
