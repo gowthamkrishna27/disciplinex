@@ -159,7 +159,18 @@ export const registerUser = async (req, res) => {
     }
 
     if (userExists) {
-      return res.status(400).json({ message: 'User already exists with this email' });
+      if (userExists.isVerified) {
+        return res.status(400).json({ message: 'User already exists with this email' });
+      } else {
+        // If the user exists but is NOT verified, delete the old unverified record
+        // so we can register them fresh and send/display a new verification link
+        console.log(`[Auth Controller] Deleting unverified duplicate user record for: ${email}`);
+        if (isFallback) {
+          JsonDb.deleteUser(userExists._id);
+        } else {
+          await User.deleteOne({ _id: userExists._id });
+        }
+      }
     }
 
     // Hash password
