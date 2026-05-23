@@ -146,6 +146,7 @@ export const Login = () => {
   };
 
   useEffect(() => {
+    let observer;
     const initializeGoogleSignIn = () => {
       if (window.google) {
         try {
@@ -157,6 +158,7 @@ export const Login = () => {
           const renderButtons = () => {
             const btnEl = document.getElementById("googleSignInBtn");
             if (btnEl) {
+              btnEl.innerHTML = ''; // clear any prior button state to prevent duplications
               window.google.accounts.id.renderButton(btnEl, {
                 theme: isDark ? "filled_blue" : "outline",
                 size: "large",
@@ -170,33 +172,37 @@ export const Login = () => {
           renderButtons();
 
           // Observe view changes to re-render the button anchor when it mounts
-          const observer = new MutationObserver(() => {
+          observer = new MutationObserver(() => {
             renderButtons();
           });
           observer.observe(document.body, { childList: true, subtree: true });
-          
-          return () => observer.disconnect();
         } catch (err) {
           console.error('[Google OAuth] Init Error:', err);
         }
       }
     };
 
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.defer = true;
-    script.onload = initializeGoogleSignIn;
-    document.body.appendChild(script);
-
-    if (window.google) {
-      initializeGoogleSignIn();
+    // Check if the script is already added in the document to prevent duplication
+    let script = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+    if (!script) {
+      script = document.createElement('script');
+      script.src = 'https://accounts.google.com/gsi/client';
+      script.async = true;
+      script.defer = true;
+      script.onload = initializeGoogleSignIn;
+      document.body.appendChild(script);
+    } else {
+      if (window.google) {
+        initializeGoogleSignIn();
+      } else {
+        script.onload = initializeGoogleSignIn;
+      }
     }
 
     return () => {
-      try {
-        document.body.removeChild(script);
-      } catch (e) {}
+      if (observer) {
+        observer.disconnect();
+      }
     };
   }, [view, isDark]);
 
