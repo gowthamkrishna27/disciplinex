@@ -146,6 +146,17 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const resendVerification = async (email) => {
+    setError(null);
+    try {
+      const data = await api.post('/auth/resend-verification', { email });
+      return data;
+    } catch (err) {
+      setError(err.message || 'Resend verification failed');
+      throw err;
+    }
+  };
+
   const logout = (reason = null) => {
     localStorage.removeItem('token');
     setUser(null);
@@ -361,6 +372,7 @@ export const AuthProvider = ({ children }) => {
       login, 
       signup, 
       verifyEmailCode,
+      resendVerification,
       logout, 
       updateUserProfile, 
       setError,

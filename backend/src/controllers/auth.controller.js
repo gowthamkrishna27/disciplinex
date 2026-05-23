@@ -13,6 +13,12 @@ const JWT_SECRET = process.env.JWT_SECRET || 'disciplinex_super_secret_key_123_4
 const CAPTCHA_SECRET = process.env.JWT_SECRET || 'disciplinex_captcha_secret_123_456';
 const isProd = process.env.NODE_ENV === 'production';
 
+// Hash token helper using SHA-256 for secure database storage
+const hashToken = (token) => {
+  if (!token) return null;
+  return crypto.createHash('sha256').update(token).digest('hex');
+};
+
 // Device Name Parser Helper
 const getDeviceName = (userAgent) => {
   if (!userAgent) return 'Unknown Device';
@@ -179,6 +185,7 @@ export const registerUser = async (req, res) => {
 
     // Generate verification token (expires in 5 minutes)
     const verificationToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = hashToken(verificationToken);
     const verificationExpires = new Date(Date.now() + 5 * 60 * 1000);
 
     // Create user
@@ -195,8 +202,9 @@ export const registerUser = async (req, res) => {
       activeSessions: [],
       webAuthnCredentials: [],
       isVerified: false,
-      emailVerificationToken: verificationToken,
-      emailVerificationExpires: verificationExpires
+      emailVerificationToken: hashedToken,
+      emailVerificationExpires: verificationExpires,
+      lastVerificationSentAt: new Date()
     };
 
     if (isFallback) {
@@ -496,6 +504,18 @@ export const loginUser = async (req, res) => {
       await user.save();
     }
 
+    // Dispatch Security Alert Email in background to never block response
+    try {
+      sendSecurityAlertEmail(user.email, {
+        eventName: 'New Active Session Authorized',
+        deviceName,
+        ipAddress: user.lastLoginIp || 'Unknown IP',
+        timestamp: new Date()
+      });
+    } catch (alertErr) {
+      console.warn('[Login Alert] Failed to dispatch alert email:', alertErr.message);
+    }
+
     // Set secure HTTP-only cookie
     res.cookie('dx_token', token, {
       httpOnly: true,
@@ -667,7 +687,8 @@ export const requestReset = async (req, res) => {
 
     // Generate secure 6-digit reset code
     const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-    user.resetPasswordToken = resetCode;
+    const hashedResetCode = hashToken(resetCode);
+    user.resetPasswordToken = hashedResetCode;
     user.resetPasswordExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
 
     if (isFallback) {
@@ -731,7 +752,8 @@ export const executeReset = async (req, res) => {
     }
 
     const now = new Date();
-    if (!user.resetPasswordToken || String(user.resetPasswordToken) !== String(code) || new Date(user.resetPasswordExpires).getTime() < now.getTime()) {
+    const hashedIncomingCode = hashToken(code);
+    if (!user.resetPasswordToken || user.resetPasswordToken !== hashedIncomingCode || new Date(user.resetPasswordExpires).getTime() < now.getTime()) {
       return res.status(400).json({ message: 'Reset code is invalid or has expired.' });
     }
 
@@ -1353,11 +1375,12 @@ export const verifyEmail = async (req, res) => {
   try {
     const isFallback = checkFallback();
     let user;
+    const hashedToken = hashToken(token);
 
     if (isFallback) {
-      user = JsonDb.findUserByVerificationToken(token);
+      user = JsonDb.findUserByVerificationToken(hashedToken);
     } else {
-      user = await User.findOne({ emailVerificationToken: token });
+      user = await User.findOne({ emailVerificationToken: hashedToken });
     }
 
     if (!user) {
@@ -1470,6 +1493,90 @@ export const verifyEmail = async (req, res) => {
   } catch (error) {
     console.error('[Email Verification Error]', error);
     res.status(500).send('Server error during email verification.');
+  }
+};
+
+/**
+ * 17. Resend Verification Email Link with Cooldown Check
+ */
+export const resendVerificationEmailCode = async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: 'Please specify your email address' });
+  }
+
+  // Email format check
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    return res.status(400).json({ message: 'Please enter a valid email address.' });
+  }
+
+  try {
+    const isFallback = checkFallback();
+    let user;
+    if (isFallback) {
+      user = JsonDb.findUserByEmail(email);
+    } else {
+      user = await User.findOne({ email });
+    }
+
+    if (!user) {
+      return res.status(444).json({ message: 'No registration record found for this email address.' });
+    }
+
+    if (user.isVerified) {
+      return res.status(400).json({ message: 'This account has already been verified. Please sign in.' });
+    }
+
+    // Cooldown check (60 seconds)
+    const now = new Date();
+    if (user.lastVerificationSentAt && (now.getTime() - new Date(user.lastVerificationSentAt).getTime() < 60000)) {
+      const secondsLeft = Math.ceil((60000 - (now.getTime() - new Date(user.lastVerificationSentAt).getTime())) / 1000);
+      return res.status(429).json({
+        message: `Please wait ${secondsLeft} second(s) before requesting another verification email.`
+      });
+    }
+
+    // Generate fresh verification token
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const hashedToken = hashToken(verificationToken);
+    const verificationExpires = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
+
+    user.emailVerificationToken = hashedToken;
+    user.emailVerificationExpires = verificationExpires;
+    user.lastVerificationSentAt = now;
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, {
+        emailVerificationToken: user.emailVerificationToken,
+        emailVerificationExpires: user.emailVerificationExpires,
+        lastVerificationSentAt: user.lastVerificationSentAt
+      });
+    } else {
+      await user.save();
+    }
+
+    // Build URL
+    const host = req.get('host');
+    const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
+    const verifyUrl = `${protocol}://${host}/api/auth/verify-email?token=${verificationToken}`;
+
+    // Dispatch
+    const emailResult = await sendVerificationEmail(user.email, verifyUrl);
+
+    let message = 'A fresh verification link has been dispatched to your email address.';
+    if (emailResult && emailResult.previewUrl) {
+      message = `A fresh verification link has been sent to Ethereal Mail: ${emailResult.previewUrl}`;
+    } else if (!emailResult || !emailResult.success) {
+      message = `Verification email failed to send due to connection restrictions in this environment. You can verify your account immediately by clicking this secure link: ${verifyUrl}`;
+    }
+
+    res.json({ message });
+
+  } catch (error) {
+    console.error('[Resend Verification Error]', error);
+    res.status(500).json({ message: 'Failed to resend verification email.', error: error.message });
   }
 };
 

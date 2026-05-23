@@ -57,6 +57,20 @@ export const Login = () => {
   const [verificationEmail, setVerificationEmail] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
 
+  // Railway Enterprise System states
+  const [unverifiedEmail, setUnverifiedEmail] = useState('');
+  const [showVerificationBanner, setShowVerificationBanner] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+
+  // Handle 60-second resend verification link cooldown countdown
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return;
+    const interval = setInterval(() => {
+      setCooldownSeconds(prev => prev - 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [cooldownSeconds]);
+
   const renderMessageWithLinks = (text) => {
     if (!text) return null;
     const urlRegex = /(https?:\/\/[^\s]+)/g;
@@ -83,6 +97,7 @@ export const Login = () => {
     login, 
     signup, 
     verifyEmailCode,
+    resendVerification,
     verify2FA,
     inactivityLoggedOut,
     setInactivityLoggedOut
@@ -244,6 +259,12 @@ export const Login = () => {
       } catch (err) {
         console.error('[Login] Login error:', err.message);
         setFormError(err.message || 'Authentication failed.');
+
+        // Handle unverified email login attempts
+        if (err.data && err.data.notVerified) {
+          setShowVerificationBanner(true);
+          setUnverifiedEmail(email);
+        }
         
         // Check if CAPTCHA challenge is requested
         if (err.data && err.data.requireCaptcha) {
@@ -278,6 +299,26 @@ export const Login = () => {
       setVerificationCode('');
     } catch (err) {
       setFormError(err.message || 'Verification failed. The code may be invalid or expired.');
+    } finally {
+      setLoadingState(false);
+    }
+  };
+
+  // Handle Resend Verification Email Link
+  const handleResendVerification = async () => {
+    if (cooldownSeconds > 0) return;
+    setFormError('');
+    setSuccessMessage('');
+    setLoadingState(true);
+    setLoadingMessage('Resending link...');
+
+    try {
+      const targetEmail = unverifiedEmail || email;
+      const res = await resendVerification(targetEmail);
+      setSuccessMessage(res?.message || 'A fresh verification link has been dispatched to your email address.');
+      setCooldownSeconds(60); // 60 seconds cooldown
+    } catch (err) {
+      setFormError(err.message || 'Failed to resend verification link.');
     } finally {
       setLoadingState(false);
     }
@@ -414,6 +455,30 @@ export const Login = () => {
           <div className="mb-6 p-4 rounded-xl bg-brand-green/5 border border-brand-green/20 text-brand-green text-xs font-semibold text-center flex items-center justify-center gap-1.5">
             <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
             <span>{renderMessageWithLinks(successMessage)}</span>
+          </div>
+        )}
+
+        {showVerificationBanner && (
+          <div className="mb-6 p-4 rounded-xl bg-brand-purple/5 border border-brand-purple/20 text-xs text-center flex flex-col items-center gap-3">
+            <div className="flex items-center justify-center gap-1.5 font-semibold text-brand-purple">
+              <Mail className="w-4 h-4 flex-shrink-0 animate-bounce" />
+              <span>Verify Your Workspace Identity</span>
+            </div>
+            <p className="text-color-text-muted-light dark:text-color-text-muted-dark m-0 leading-relaxed">
+              Your account for <strong>{unverifiedEmail}</strong> is registered but hasn't been verified yet. Check your inbox, or request a new verification link below:
+            </p>
+            <button
+              type="button"
+              disabled={loadingState || cooldownSeconds > 0}
+              onClick={handleResendVerification}
+              className="px-4 py-2 bg-brand-purple hover:bg-brand-purple/90 disabled:bg-brand-purple/40 text-white rounded-lg font-semibold transition cursor-pointer select-none text-[11px] flex items-center gap-1.5"
+            >
+              {cooldownSeconds > 0 ? (
+                <span>Resend available in {cooldownSeconds}s</span>
+              ) : (
+                <span>Resend Verification Link</span>
+              )}
+            </button>
           </div>
         )}
 

@@ -5,6 +5,7 @@ import {
   verifyEmail,
   verifyEmailCode,
   verifyTwoFactor,
+  resendVerificationEmailCode,
   requestReset,
   executeReset,
   getActiveSessions,
@@ -26,6 +27,7 @@ const router = express.Router();
 router.post('/signup', registerUser);
 router.post('/verify-code', verifyEmailCode);
 router.get('/verify-email', verifyEmail);
+router.post('/resend-verification', resendVerificationEmailCode);
 router.post('/login', loginUser);
 router.post('/verify-2fa', verifyTwoFactor);
 
