@@ -1281,6 +1281,7 @@ export const getProfile = async (req, res) => {
       name: user.name,
       email: user.email,
       dailyGoal: user.dailyGoal,
+      isVerified: user.isVerified,
       twoFactorEnabled: user.twoFactorEnabled,
       twoFactorMethod: user.twoFactorMethod,
       lastLoginAt: user.lastLoginAt,
@@ -1326,6 +1327,7 @@ export const updateProfile = async (req, res) => {
       name: updatedUser.name,
       email: updatedUser.email,
       dailyGoal: updatedUser.dailyGoal,
+      isVerified: updatedUser.isVerified,
     });
   } catch (error) {
     console.error('[Auth Controller] Profile Update Error:', error);
