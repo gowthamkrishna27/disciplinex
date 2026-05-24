@@ -7,6 +7,7 @@ import User from '../models/User.js';
 import { JsonDb } from '../models/fallback/jsonDb.js';
 import { generateCaptcha, verifyCaptcha } from '../middleware/security.js';
 import { sendVerificationEmail, sendOtpEmail, sendResetCodeEmail, testSmtpConnection } from '../utils/email.js';
+import https from 'https';
 
 // Load JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET || 'disciplinex_super_secret_key_123_456';
@@ -1659,13 +1660,33 @@ export const googleAuth = async (req, res) => {
   }
 
   try {
-    // 1. Cryptographically verify Google ID Token via Google API (zero-dependency)
-    const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
+    // 1. Cryptographically verify Google ID Token via Google API (zero-dependency https helper for universal compatibility)
+    const googleRes = await new Promise((resolve) => {
+      https.get(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`, (getRes) => {
+        let rawData = '';
+        getRes.on('data', (chunk) => { rawData += chunk; });
+        getRes.on('end', () => {
+          try {
+            const parsedData = JSON.parse(rawData);
+            if (getRes.statusCode === 200) {
+              resolve({ ok: true, payload: parsedData });
+            } else {
+              resolve({ ok: false, error: parsedData.error_description || 'Invalid token' });
+            }
+          } catch (e) {
+            resolve({ ok: false, error: 'Failed to parse Google response' });
+          }
+        });
+      }).on('error', (err) => {
+        resolve({ ok: false, error: err.message || 'Google API connection error' });
+      });
+    });
+
     if (!googleRes.ok) {
-      return res.status(401).json({ message: 'Invalid Google authentication token' });
+      return res.status(401).json({ message: googleRes.error || 'Invalid Google authentication token' });
     }
 
-    const payload = await googleRes.json();
+    const payload = googleRes.payload;
     const { email, name, sub: googleId } = payload;
 
     // 2. Verify target Client ID matches our Google Credentials project console
