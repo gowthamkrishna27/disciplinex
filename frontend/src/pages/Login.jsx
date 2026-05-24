@@ -608,16 +608,9 @@ export const Login = () => {
                   Create an Account
                 </button>
               </p>
-              <button
-                onClick={() => {
-                  setView('forgot-password');
-                  setFormError('');
-                  setSuccessMessage('');
-                }}
-                className="text-[11px] text-brand-purple/75 hover:text-brand-purple hover:underline font-medium cursor-pointer"
-              >
-                Trouble signing in or reset legacy password?
-              </button>
+              <p className="text-[11px] text-zinc-400 mt-1">
+                For sign-in problems, contact <a href="mailto:nexauth.dev@gmail.com" className="text-brand-purple hover:underline font-semibold">nexauth.dev@gmail.com</a>
+              </p>
             </div>
           </div>
         )}
@@ -645,7 +638,7 @@ export const Login = () => {
               </p>
             </div>
 
-            <div className="mt-8 pt-6 border-t border-border-light dark:border-border-dark text-center">
+            <div className="mt-8 pt-6 border-t border-border-light dark:border-border-dark text-center flex flex-col gap-3">
               <p className="text-xs text-color-text-muted-light dark:text-color-text-muted-dark">
                 Already have an account?
                 <button
@@ -658,6 +651,9 @@ export const Login = () => {
                 >
                   Sign In
                 </button>
+              </p>
+              <p className="text-[11px] text-zinc-400 mt-1">
+                For sign-in problems, contact <a href="mailto:nexauth.dev@gmail.com" className="text-brand-purple hover:underline font-semibold">nexauth.dev@gmail.com</a>
               </p>
             </div>
           </div>
