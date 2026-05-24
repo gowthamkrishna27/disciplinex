@@ -18,7 +18,8 @@ import {
   verifyBiometricLogin,
   getProfile,
   updateProfile,
-  testSmtp
+  testSmtp,
+  googleAuth
 } from '../controllers/auth.controller.js';
 import { protect, requireVerifiedUser } from '../middleware/auth.js';
 
@@ -32,6 +33,7 @@ router.get('/verify-email', verifyEmail);
 router.post('/resend-verification', resendVerificationEmailCode);
 router.post('/login', loginUser);
 router.post('/verify-2fa', verifyTwoFactor);
+router.post('/google-auth', googleAuth);
 
 // Password Resets
 router.post('/forgot-password', requestReset);

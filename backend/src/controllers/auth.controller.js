@@ -1648,3 +1648,114 @@ export const testSmtp = async (req, res) => {
   }
 };
 
+/**
+ * 19. Google OAuth token info verification & login/signup
+ */
+export const googleAuth = async (req, res) => {
+  const { idToken } = req.body;
+
+  if (!idToken) {
+    return res.status(400).json({ message: 'Google ID token is required' });
+  }
+
+  try {
+    // 1. Cryptographically verify Google ID Token via Google API (zero-dependency)
+    const googleRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`);
+    if (!googleRes.ok) {
+      return res.status(401).json({ message: 'Invalid Google authentication token' });
+    }
+
+    const payload = await googleRes.json();
+    const { email, name, sub: googleId } = payload;
+
+    // 2. Verify target Client ID matches our Google Credentials project console
+    const CLIENT_ID = "866577965805-saof2fms48ppama7f06f45pb9j4ad3aa.apps.googleusercontent.com";
+    if (payload.aud !== CLIENT_ID) {
+      return res.status(401).json({ message: 'Token audience mismatch' });
+    }
+
+    const isFallback = checkFallback();
+    let user;
+
+    if (isFallback) {
+      user = JsonDb.findUserByEmail(email);
+    } else {
+      user = await User.findOne({ email });
+    }
+
+    // 3. Register fresh profile if user does not exist in our database
+    if (!user) {
+      console.log(`[Google Auth] Registering new user: ${email}`);
+      const randomPassword = crypto.randomBytes(32).toString('hex');
+      const salt = await bcrypt.genSalt(10);
+      const hashedPassword = await bcrypt.hash(randomPassword, salt);
+
+      const initialData = {
+        name,
+        email,
+        password: hashedPassword,
+        dailyGoal: 4,
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        twoFactorEnabled: false,
+        trustedDevices: [],
+        activeSessions: [],
+        webAuthnCredentials: [],
+        isVerified: true, // OAuth provider profiles are pre-verified
+        createdAt: new Date()
+      };
+
+      if (isFallback) {
+        user = JsonDb.createUser(initialData);
+      } else {
+        user = await User.create(initialData);
+      }
+    } else {
+      console.log(`[Google Auth] Logging in existing user: ${email}`);
+      // Auto-verify if user exists but has isVerified === false
+      if (!user.isVerified) {
+        user.isVerified = true;
+        if (isFallback) {
+          JsonDb.updateUser(user._id, { isVerified: true });
+        } else {
+          await user.save();
+        }
+      }
+    }
+
+    // 4. Generate system access session token (JWT)
+    const token = generateToken(user._id);
+    const deviceName = getDeviceName(req.headers['user-agent']);
+    addSession(user, token, deviceName, req.ip || req.headers['x-forwarded-for'] || '127.0.0.1');
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, { activeSessions: user.activeSessions });
+    } else {
+      await user.save();
+    }
+
+    // 5. Write DX secure session cookie
+    const isProd = process.env.NODE_ENV === 'production';
+    res.cookie('dx_token', token, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+    });
+
+    res.status(200).json({
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      dailyGoal: user.dailyGoal,
+      isVerified: user.isVerified,
+      token,
+      message: 'Logged in successfully with Google!'
+    });
+
+  } catch (error) {
+    console.error('[Google Auth Controller] Error:', error);
+    res.status(500).json({ message: 'Server error during Google authentication', error: error.message });
+  }
+};
+

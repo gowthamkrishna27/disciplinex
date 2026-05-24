@@ -139,6 +139,20 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const loginWithGoogle = async (idToken) => {
+    setError(null);
+    setInactivityLoggedOut(false);
+    try {
+      const data = await api.post('/auth/google-auth', { idToken });
+      localStorage.setItem('token', data.token);
+      setUser(data);
+      return data;
+    } catch (err) {
+      setError(err.message || 'Google login failed');
+      throw err;
+    }
+  };
+
   const verifyEmailCode = async (email, code) => {
     setError(null);
     try {
@@ -375,6 +389,7 @@ export const AuthProvider = ({ children }) => {
       error, 
       login, 
       signup, 
+      loginWithGoogle,
       verifyEmailCode,
       resendVerification,
       logout, 

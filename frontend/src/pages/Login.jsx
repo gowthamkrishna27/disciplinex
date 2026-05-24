@@ -96,6 +96,7 @@ export const Login = () => {
   const { 
     login, 
     signup, 
+    loginWithGoogle,
     verifyEmailCode,
     resendVerification,
     verify2FA,
@@ -112,33 +113,15 @@ export const Login = () => {
 
     try {
       const idToken = response.credential;
-      const base64Url = idToken.split('.')[1];
-      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
-          return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2);
-      }).join(''));
-
-      const profile = JSON.parse(jsonPayload);
-      const { email, name, sub: googleId } = profile;
-
-      console.log('[Google OAuth] Authenticated:', name, email);
-      const googlePassword = `google_oauth_fallback_sec_${googleId}_123!`;
-
-      try {
-        console.log('[Google OAuth] Attempting automatic login...');
-        await login(email, googlePassword);
-        console.log('[Google OAuth] Login successful!');
-      } catch (loginErr) {
-        console.log('[Google OAuth] User not registered. Registering with Google provider...');
-        try {
-          const signupRes = await signup(name, email, googlePassword, 'google');
-          console.log('[Google OAuth] Registration successful:', signupRes);
-        } catch (signupErr) {
-          throw new Error(signupErr.message || 'Failed to complete Google Sign-up.');
-        }
+      if (!idToken) {
+        throw new Error('Credential not returned from Google authentication.');
       }
+
+      console.log('[Google OAuth] Attempting backend token authentication...');
+      await loginWithGoogle(idToken);
+      console.log('[Google OAuth] Backend login and registration fully successful!');
     } catch (err) {
-      console.error('[Google OAuth] Error:', err);
+      console.error('[Google OAuth] Authentication Error:', err);
       setFormError(err.message || 'Google Authentication failed.');
     } finally {
       setLoadingState(false);
