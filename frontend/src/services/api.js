@@ -1,5 +1,5 @@
 const getApiBase = () => {
-  if (typeof window === 'undefined') return 'https://disciplinex-production.up.railway.app/api';
+  if (typeof window === 'undefined') return 'https://disciplinex-7c8o.onrender.com/api';
   const hostname = window.location.hostname;
   const isLocal = 
     hostname === 'localhost' || 
@@ -10,7 +10,7 @@ const getApiBase = () => {
     hostname.startsWith('172.') || 
     hostname.endsWith('.local');
     
-  return isLocal ? `http://${hostname}:5000/api` : 'https://disciplinex-production.up.railway.app/api';
+  return isLocal ? `http://${hostname}:5000/api` : 'https://disciplinex-7c8o.onrender.com/api';
 };
 
 const API_BASE = getApiBase();
