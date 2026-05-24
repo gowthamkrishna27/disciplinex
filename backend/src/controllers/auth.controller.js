@@ -1653,7 +1653,7 @@ export const testSmtp = async (req, res) => {
  * 19. Google OAuth token info verification & login/signup
  */
 export const googleAuth = async (req, res) => {
-  const { idToken } = req.body;
+  const { idToken, trustedDeviceId } = req.body;
 
   if (!idToken) {
     return res.status(400).json({ message: 'Google ID token is required' });
@@ -1744,19 +1744,111 @@ export const googleAuth = async (req, res) => {
       }
     }
 
+    // SUCCESSFUL AUTHENTICATION - Reset Lockouts & Update Metadata
+    user.failedLoginAttempts = 0;
+    user.lockoutUntil = null;
+    user.lastLoginAt = new Date();
+    user.lastLoginIp = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
+
+    const now = new Date();
+
+    // 2FA Trusted Device Check
+    let deviceBypassed = false;
+    if (user.twoFactorEnabled && trustedDeviceId && user.trustedDevices) {
+      const match = user.trustedDevices.find(
+        d => d.deviceId === trustedDeviceId && new Date(d.expiresAt) > now
+      );
+      if (match) {
+        deviceBypassed = true;
+      }
+    }
+
+    // 2FA Verification Triggers
+    if (user.twoFactorEnabled && !deviceBypassed) {
+      // Create short-lived 2FA authorization token (expires in 15 mins)
+      const tempToken = jwt.sign(
+        { tempUserId: user._id, action: '2fa_pending' },
+        JWT_SECRET,
+        { expiresIn: '15m' }
+      );
+
+      if (user.twoFactorMethod === 'email') {
+        // Generate and store email OTP
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digits
+        user.emailOtp = otpCode;
+        user.emailOtpExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
+        if (isFallback) {
+          JsonDb.updateUser(user._id, {
+            failedLoginAttempts: 0,
+            lockoutUntil: null,
+            lastLoginAt: user.lastLoginAt,
+            lastLoginIp: user.lastLoginIp,
+            emailOtp: user.emailOtp,
+            emailOtpExpires: user.emailOtpExpires
+          });
+        } else {
+          await user.save();
+        }
+
+        // Dispatch real or Ethereal 2FA OTP Email
+        const emailResult = await sendOtpEmail(user.email, otpCode);
+
+        // Print Simulated/Ethereal Email Delivery log
+        console.log(`\n======================================================================`);
+        console.log(`[MAIL SERVER] 2FA OTP Delivery to: ${user.email}`);
+        console.log(`[DisciplineX OTP CODE] Code: ${otpCode}`);
+        if (emailResult && emailResult.previewUrl) {
+          console.log(`[ETHEREAL MAILBOX] Link: ${emailResult.previewUrl}`);
+        }
+        console.log(`======================================================================\n`);
+
+        return res.json({
+          require2FA: true,
+          twoFaToken: tempToken,
+          method: 'email',
+          message: 'A 2FA verification code has been sent to your email.'
+        });
+      } else {
+        // App-based TOTP (authenticator)
+        if (isFallback) {
+          JsonDb.updateUser(user._id, {
+            failedLoginAttempts: 0,
+            lockoutUntil: null,
+            lastLoginAt: user.lastLoginAt,
+            lastLoginIp: user.lastLoginIp
+          });
+        } else {
+          await user.save();
+        }
+
+        return res.json({
+          require2FA: true,
+          twoFaToken: tempToken,
+          method: 'authenticator',
+          message: 'Please retrieve the 6-digit TOTP token from your authenticator app.'
+        });
+      }
+    }
+
     // 4. Generate system access session token (JWT)
     const token = generateToken(user._id);
     const deviceName = getDeviceName(req.headers['user-agent']);
     addSession(user, token, deviceName, req.ip || req.headers['x-forwarded-for'] || '127.0.0.1');
 
     if (isFallback) {
-      JsonDb.updateUser(user._id, { activeSessions: user.activeSessions });
+      JsonDb.updateUser(user._id, { 
+        activeSessions: user.activeSessions,
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        lastLoginAt: user.lastLoginAt,
+        lastLoginIp: user.lastLoginIp
+      });
     } else {
       await user.save();
     }
 
     // 5. Write DX secure session cookie
-    const isProd = process.env.NODE_ENV === 'production';
     res.cookie('dx_token', token, {
       httpOnly: true,
       secure: isProd,

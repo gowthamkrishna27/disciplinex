@@ -117,9 +117,26 @@ export const Login = () => {
         throw new Error('Credential not returned from Google authentication.');
       }
 
+      // Retrieve trusted device cookie ID if exists
+      const cookieId = document.cookie
+        .split('; ')
+        .find(row => row.startsWith('dx_trusted_device='))
+        ?.split('=')[1] || null;
+
       console.log('[Google OAuth] Attempting backend token authentication...');
-      await loginWithGoogle(idToken);
-      console.log('[Google OAuth] Backend login and registration fully successful!');
+      const data = await loginWithGoogle(idToken, cookieId);
+      console.log('[Google OAuth] Backend login response received:', data);
+
+      if (data && data.require2FA) {
+        console.log('[Google OAuth] 2FA required, switching view.');
+        setTwoFaToken(data.twoFaToken);
+        setTwoFaMethod(data.method);
+        setSuccessMessage(data.message);
+        setView('2fa');
+        setOtp('');
+      } else {
+        console.log('[Google OAuth] Backend login and registration fully successful!');
+      }
     } catch (err) {
       console.error('[Google OAuth] Authentication Error:', err);
       setFormError(err.message || 'Google Authentication failed.');
@@ -569,123 +586,15 @@ export const Login = () => {
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-color-text-muted-light dark:text-color-text-muted-dark mb-1.5">
-                  Email Address
-                </label>
-                <div className="relative flex items-center">
-                  <span className="absolute left-3 text-color-text-muted-light dark:text-color-text-muted-dark">
-                    <Mail className="w-4 h-4" />
-                  </span>
-                  <input
-                    type="email"
-                    placeholder="john@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-transparent border border-border-light dark:border-border-dark rounded-xl text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple dark:text-white transition"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-color-text-muted-light dark:text-color-text-muted-dark">
-                    Password
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setView('forgot-password');
-                      setFormError('');
-                      setSuccessMessage('');
-                    }}
-                    className="text-xs text-brand-purple hover:underline font-semibold"
-                  >
-                    Forgot Password?
-                  </button>
-                </div>
-                
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-color-text-muted-light dark:text-color-text-muted-dark">
-                    <Lock className="w-4 h-4" />
-                  </span>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-10 py-2.5 bg-transparent border border-border-light dark:border-border-dark rounded-xl text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple dark:text-white transition"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* ----------------- MATH CAPTCHA SECTION ----------------- */}
-              {requireCaptcha && (
-                <div className="p-4 rounded-xl bg-zinc-50 dark:bg-zinc-800/40 border border-border-light dark:border-border-dark space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold uppercase tracking-wider text-brand-red flex items-center gap-1">
-                      <ShieldAlert className="w-3.5 h-3.5" /> Math CAPTCHA Required
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleRefreshCaptcha}
-                      className="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition p-1"
-                      title="Load fresh CAPTCHA challenge"
-                    >
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin-slow" />
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <div className="bg-white dark:bg-zinc-800 px-4 py-2 border border-border-light dark:border-border-dark rounded-xl text-sm font-bold font-mono text-zinc-700 dark:text-zinc-300">
-                      {captchaEquation}
-                    </div>
-                    <input
-                      type="number"
-                      placeholder="Answer"
-                      value={captchaAnswer}
-                      onChange={(e) => setCaptchaAnswer(e.target.value)}
-                      className="flex-grow px-3 py-2 bg-transparent border border-border-light dark:border-border-dark rounded-xl text-sm font-semibold outline-none focus:border-brand-purple dark:text-white"
-                      required
-                    />
-                  </div>
-                  <p className="text-[10px] text-zinc-400 mt-1">
-                    Solve this equation to unlock sign-in. This rate-limit prevents credential scraping bots.
-                  </p>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loadingState}
-                className="w-full mt-6 py-2.5 bg-brand-purple hover:bg-brand-purple/90 disabled:bg-brand-purple/50 text-white rounded-xl text-sm font-medium transition cursor-pointer select-none card-shadow flex items-center justify-center gap-2"
-              >
-                {loadingState ? loadingMessage : 'Sign In securely'}
-              </button>
-            </form>
-
-            <div className="relative flex py-5 items-center">
-              <div className="flex-grow border-t border-border-light dark:border-border-dark"></div>
-              <span className="flex-shrink mx-4 text-zinc-400 text-xs uppercase tracking-wider font-semibold">Or</span>
-              <div className="flex-grow border-t border-border-light dark:border-border-dark"></div>
-            </div>
-
             {/* Google Sign In Button Anchor */}
-            <div className="w-full flex justify-center py-1">
-              <div id="googleSignInBtn"></div>
+            <div className="w-full flex flex-col items-center justify-center py-6 gap-2">
+              <div id="googleSignInBtn" className="w-full flex justify-center"></div>
+              <p className="text-[10px] text-zinc-400 mt-1">
+                DisciplineX now authenticates exclusively via secure Google Single Sign-On.
+              </p>
             </div>
 
-            <div className="mt-8 pt-6 border-t border-border-light dark:border-border-dark text-center">
+            <div className="mt-8 pt-6 border-t border-border-light dark:border-border-dark text-center flex flex-col gap-3">
               <p className="text-xs text-color-text-muted-light dark:text-color-text-muted-dark">
                 Don't have an account yet?
                 <button
@@ -699,6 +608,16 @@ export const Login = () => {
                   Create an Account
                 </button>
               </p>
+              <button
+                onClick={() => {
+                  setView('forgot-password');
+                  setFormError('');
+                  setSuccessMessage('');
+                }}
+                className="text-[11px] text-brand-purple/75 hover:text-brand-purple hover:underline font-medium cursor-pointer"
+              >
+                Trouble signing in or reset legacy password?
+              </button>
             </div>
           </div>
         )}
@@ -718,118 +637,12 @@ export const Login = () => {
               </p>
             </div>
 
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-color-text-muted-light dark:text-color-text-muted-dark mb-1.5">
-                  Full Name
-                </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-color-text-muted-light dark:text-color-text-muted-dark">
-                    <User className="w-4 h-4" />
-                  </span>
-                  <input
-                    type="text"
-                    placeholder="e.g. John Doe"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-transparent border border-border-light dark:border-border-dark rounded-xl text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple dark:text-white transition"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-color-text-muted-light dark:text-color-text-muted-dark mb-1.5">
-                  Email Address
-                </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-color-text-muted-light dark:text-color-text-muted-dark">
-                    <Mail className="w-4 h-4" />
-                  </span>
-                  <input
-                    type="email"
-                    placeholder="john@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2.5 bg-transparent border border-border-light dark:border-border-dark rounded-xl text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple dark:text-white transition"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-color-text-muted-light dark:text-color-text-muted-dark mb-1.5">
-                  Secure Password
-                </label>
-                <div className="relative">
-                  <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center text-color-text-muted-light dark:text-color-text-muted-dark">
-                    <Lock className="w-4 h-4" />
-                  </span>
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder="••••••••"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full pl-10 pr-10 py-2.5 bg-transparent border border-border-light dark:border-border-dark rounded-xl text-sm outline-none focus:border-brand-purple focus:ring-1 focus:ring-brand-purple dark:text-white transition"
-                    required
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-
-                {/* Real-time Password Strength Meter */}
-                {password.length > 0 && (
-                  <div className="mt-2.5 space-y-1">
-                    <div className="flex items-center justify-between text-[10px] font-semibold text-zinc-400">
-                      <span>Password Strength:</span>
-                      <span className={
-                        passwordStrength === 1 ? 'text-brand-red' :
-                        passwordStrength === 2 ? 'text-brand-amber' :
-                        passwordStrength === 3 ? 'text-brand-green' : 'text-zinc-400'
-                      }>
-                        {passwordStrength === 1 && 'Weak (At least 8 characters)'}
-                        {passwordStrength === 2 && 'Medium (Add numbers/symbols)'}
-                        {passwordStrength === 3 && 'Strong & Cryptographically Safe'}
-                      </span>
-                    </div>
-                    <div className="h-1 w-full bg-zinc-100 dark:bg-zinc-800 rounded-full overflow-hidden flex gap-0.5">
-                      <div className={`h-full flex-grow transition-all duration-300 ${
-                        passwordStrength >= 1 ? (passwordStrength === 1 ? 'bg-brand-red' : passwordStrength === 2 ? 'bg-brand-amber' : 'bg-brand-green') : 'bg-transparent'
-                      }`} />
-                      <div className={`h-full flex-grow transition-all duration-300 ${
-                        passwordStrength >= 2 ? (passwordStrength === 2 ? 'bg-brand-amber' : 'bg-brand-green') : 'bg-transparent'
-                      }`} />
-                      <div className={`h-full flex-grow transition-all duration-300 ${
-                        passwordStrength >= 3 ? 'bg-brand-green' : 'bg-transparent'
-                      }`} />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="submit"
-                disabled={loadingState}
-                className="w-full mt-6 py-2.5 bg-brand-purple hover:bg-brand-purple/90 disabled:bg-brand-purple/50 text-white rounded-xl text-sm font-semibold transition cursor-pointer select-none card-shadow flex items-center justify-center gap-2"
-              >
-                {loadingState ? loadingMessage : 'Create Account'}
-              </button>
-            </form>
-
-            <div className="relative flex py-5 items-center">
-              <div className="flex-grow border-t border-border-light dark:border-border-dark"></div>
-              <span className="flex-shrink mx-4 text-zinc-400 text-xs uppercase tracking-wider font-semibold">Or</span>
-              <div className="flex-grow border-t border-border-light dark:border-border-dark"></div>
-            </div>
-
             {/* Google Sign In Button Anchor */}
-            <div className="w-full flex justify-center py-1">
-              <div id="googleSignInBtn"></div>
+            <div className="w-full flex flex-col items-center justify-center py-6 gap-2">
+              <div id="googleSignInBtn" className="w-full flex justify-center"></div>
+              <p className="text-[10px] text-zinc-400 mt-1">
+                DisciplineX now authenticates exclusively via secure Google Single Sign-On.
+              </p>
             </div>
 
             <div className="mt-8 pt-6 border-t border-border-light dark:border-border-dark text-center">

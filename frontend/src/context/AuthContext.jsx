@@ -139,11 +139,16 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const loginWithGoogle = async (idToken) => {
+  const loginWithGoogle = async (idToken, trustedDeviceId = null) => {
     setError(null);
     setInactivityLoggedOut(false);
     try {
-      const data = await api.post('/auth/google-auth', { idToken });
+      const data = await api.post('/auth/google-auth', { idToken, trustedDeviceId });
+      
+      if (data.require2FA) {
+        return data; // Caller handles 2FA transition
+      }
+
       localStorage.setItem('token', data.token);
       setUser(data);
       return data;
