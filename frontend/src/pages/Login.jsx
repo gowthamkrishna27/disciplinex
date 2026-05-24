@@ -146,7 +146,6 @@ export const Login = () => {
   };
 
   useEffect(() => {
-    let observer;
     const initializeGoogleSignIn = () => {
       if (window.google) {
         try {
@@ -155,27 +154,17 @@ export const Login = () => {
             callback: handleGoogleCredentialResponse,
           });
           
-          const renderButtons = () => {
-            const btnEl = document.getElementById("googleSignInBtn");
-            if (btnEl) {
-              btnEl.innerHTML = ''; // clear any prior button state to prevent duplications
-              window.google.accounts.id.renderButton(btnEl, {
-                theme: isDark ? "filled_blue" : "outline",
-                size: "large",
-                width: 320,
-                text: view === 'signup' ? 'signup_with' : 'signin_with',
-                shape: "pill"
-              });
-            }
-          };
-
-          renderButtons();
-
-          // Observe view changes to re-render the button anchor when it mounts
-          observer = new MutationObserver(() => {
-            renderButtons();
-          });
-          observer.observe(document.body, { childList: true, subtree: true });
+          const btnEl = document.getElementById("googleSignInBtn");
+          if (btnEl) {
+            btnEl.innerHTML = ''; // clear any prior button state to prevent duplication
+            window.google.accounts.id.renderButton(btnEl, {
+              theme: isDark ? "filled_blue" : "outline",
+              size: "large",
+              width: 320,
+              text: view === 'signup' ? 'signup_with' : 'signin_with',
+              shape: "pill"
+            });
+          }
         } catch (err) {
           console.error('[Google OAuth] Init Error:', err);
         }
@@ -198,12 +187,6 @@ export const Login = () => {
         script.onload = initializeGoogleSignIn;
       }
     }
-
-    return () => {
-      if (observer) {
-        observer.disconnect();
-      }
-    };
   }, [view, isDark]);
 
   // Evaluate password strength
