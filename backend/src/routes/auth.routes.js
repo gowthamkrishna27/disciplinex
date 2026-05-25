@@ -37,13 +37,12 @@ router.post('/login', loginUser);
 router.post('/verify-2fa', verifyTwoFactor);
 router.post('/google-auth', googleAuth);
 
-// GitHub OAuth endpoints
 router.get('/github', passport.authenticate('github', { scope: ['user:email'] }));
 router.get(
   '/github/callback',
   passport.authenticate('github', { 
     session: true,
-    failureRedirect: `${process.env.CLIENT_URL || 'http://localhost:5173'}/login?error=GitHub OAuth authentication failed` 
+    failureRedirect: `${(process.env.CLIENT_URL || 'https://disciplinex-tau.vercel.app').replace(/\/$/, '')}/login?error=GitHub OAuth authentication failed` 
   }),
   githubAuthCallback
 );

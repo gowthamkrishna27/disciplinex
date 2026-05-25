@@ -29,7 +29,12 @@ passport.deserializeUser(async (id, done) => {
 // Configure GitHub Strategy
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID || 'Ov23litjRlZahy0jeZuE';
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET || '7de021edd866237535df638b06c8f28577f1b13e';
-const callbackURL = process.env.GITHUB_CALLBACK_URL || 'https://disciplinex-7c8o.onrender.com/api/auth/github/callback';
+
+const serverUrl = process.env.SERVER_URL || 'https://disciplinex-7c8o.onrender.com';
+const cleanServerUrl = serverUrl.replace(/\/$/, '');
+const callbackURL = process.env.GITHUB_CALLBACK_URL || `${cleanServerUrl}/api/auth/github/callback`;
+
+console.log(`[Passport GitHub Strategy] Initialized with callbackURL: ${callbackURL}`);
 
 passport.use(
   new GitHubStrategy(

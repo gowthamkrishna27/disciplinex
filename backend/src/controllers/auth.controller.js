@@ -1880,7 +1880,8 @@ export const googleAuth = async (req, res) => {
 export const githubAuthCallback = async (req, res) => {
   try {
     const user = req.user;
-    const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+    const rawClientUrl = process.env.CLIENT_URL || 'https://disciplinex-tau.vercel.app';
+    const CLIENT_URL = rawClientUrl.replace(/\/$/, '');
 
     if (!user) {
       return res.redirect(`${CLIENT_URL}/login?error=GitHub OAuth authentication failed`);
@@ -2001,7 +2002,8 @@ export const githubAuthCallback = async (req, res) => {
     return res.redirect(`${CLIENT_URL}/login?token=${token}`);
   } catch (error) {
     console.error('[GitHub Auth Callback Controller] Error:', error);
-    const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+    const rawClientUrl = process.env.CLIENT_URL || 'https://disciplinex-tau.vercel.app';
+    const CLIENT_URL = rawClientUrl.replace(/\/$/, '');
     return res.redirect(`${CLIENT_URL}/login?error=Server error during GitHub authentication`);
   }
 };
