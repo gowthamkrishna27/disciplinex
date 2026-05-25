@@ -1874,3 +1874,135 @@ export const googleAuth = async (req, res) => {
   }
 };
 
+/**
+ * 20. GitHub OAuth secure callback handler
+ */
+export const githubAuthCallback = async (req, res) => {
+  try {
+    const user = req.user;
+    const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+
+    if (!user) {
+      return res.redirect(`${CLIENT_URL}/login?error=GitHub OAuth authentication failed`);
+    }
+
+    const isFallback = checkFallback();
+    const now = new Date();
+
+    // SUCCESSFUL AUTHENTICATION - Reset Lockouts & Update Metadata
+    user.failedLoginAttempts = 0;
+    user.lockoutUntil = null;
+    user.lastLoginAt = new Date();
+    user.lastLoginIp = req.ip || req.headers['x-forwarded-for'] || '127.0.0.1';
+
+    // Parse trusted device ID from cookies
+    let trustedDeviceId = null;
+    if (req.headers.cookie) {
+      const match = req.headers.cookie.match(/dx_trusted_device=([^;]+)/);
+      if (match) {
+        trustedDeviceId = match[1];
+      }
+    }
+
+    // 2FA Trusted Device Check
+    let deviceBypassed = false;
+    if (user.twoFactorEnabled && trustedDeviceId && user.trustedDevices) {
+      const match = user.trustedDevices.find(
+        d => d.deviceId === trustedDeviceId && new Date(d.expiresAt) > now
+      );
+      if (match) {
+        deviceBypassed = true;
+      }
+    }
+
+    // 2FA Verification Triggers
+    if (user.twoFactorEnabled && !deviceBypassed) {
+      // Create short-lived 2FA authorization token (expires in 15 mins)
+      const tempToken = jwt.sign(
+        { tempUserId: user._id, action: '2fa_pending' },
+        JWT_SECRET,
+        { expiresIn: '15m' }
+      );
+
+      if (user.twoFactorMethod === 'email') {
+        // Generate and store email OTP
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString(); // 6 digits
+        user.emailOtp = otpCode;
+        user.emailOtpExpires = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
+        if (isFallback) {
+          JsonDb.updateUser(user._id, {
+            failedLoginAttempts: 0,
+            lockoutUntil: null,
+            lastLoginAt: user.lastLoginAt,
+            lastLoginIp: user.lastLoginIp,
+            emailOtp: user.emailOtp,
+            emailOtpExpires: user.emailOtpExpires
+          });
+        } else {
+          await user.save();
+        }
+
+        // Dispatch real or Ethereal 2FA OTP Email
+        const emailResult = await sendOtpEmail(user.email, otpCode);
+
+        // Print Simulated/Ethereal Email Delivery log
+        console.log(`\n======================================================================`);
+        console.log(`[MAIL SERVER] 2FA OTP Delivery to: ${user.email}`);
+        console.log(`[DisciplineX OTP CODE] Code: ${otpCode}`);
+        if (emailResult && emailResult.previewUrl) {
+          console.log(`[ETHEREAL MAILBOX] Link: ${emailResult.previewUrl}`);
+        }
+        console.log(`======================================================================\n`);
+
+        return res.redirect(`${CLIENT_URL}/login?require2FA=true&twoFaToken=${tempToken}&method=email`);
+      } else {
+        // App-based TOTP (authenticator)
+        if (isFallback) {
+          JsonDb.updateUser(user._id, {
+            failedLoginAttempts: 0,
+            lockoutUntil: null,
+            lastLoginAt: user.lastLoginAt,
+            lastLoginIp: user.lastLoginIp
+          });
+        } else {
+          await user.save();
+        }
+
+        return res.redirect(`${CLIENT_URL}/login?require2FA=true&twoFaToken=${tempToken}&method=authenticator`);
+      }
+    }
+
+    // Generate system access session token (JWT)
+    const token = generateToken(user._id);
+    const deviceName = getDeviceName(req.headers['user-agent']);
+    addSession(user, token, deviceName, req.ip || req.headers['x-forwarded-for'] || '127.0.0.1');
+
+    if (isFallback) {
+      JsonDb.updateUser(user._id, { 
+        activeSessions: user.activeSessions,
+        failedLoginAttempts: 0,
+        lockoutUntil: null,
+        lastLoginAt: user.lastLoginAt,
+        lastLoginIp: user.lastLoginIp
+      });
+    } else {
+      await user.save();
+    }
+
+    // Write DX secure session cookie
+    res.cookie('dx_token', token, {
+      httpOnly: true,
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000 // 30 days
+    });
+
+    return res.redirect(`${CLIENT_URL}/login?token=${token}`);
+  } catch (error) {
+    console.error('[GitHub Auth Callback Controller] Error:', error);
+    const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+    return res.redirect(`${CLIENT_URL}/login?error=Server error during GitHub authentication`);
+  }
+};
+

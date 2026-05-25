@@ -97,6 +97,7 @@ export const Login = () => {
     login, 
     signup, 
     loginWithGoogle,
+    loginWithToken,
     verifyEmailCode,
     resendVerification,
     verify2FA,
@@ -217,12 +218,41 @@ export const Login = () => {
   useEffect(() => {
     document.title = 'Sign In — DisciplineX';
 
-    // Parse query params to detect email verification success
+    // Parse query params to detect email verification success, OAuth token, or 2FA challenge
     const params = new URLSearchParams(window.location.search);
+    
     if (params.get('verified') === 'true') {
       setSuccessMessage('Email address verified successfully! You can now sign in.');
-      // Clean up URL query parameter without reloading page
       window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (params.get('error')) {
+      setFormError(params.get('error'));
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (params.get('require2FA') === 'true') {
+      setTwoFaToken(params.get('twoFaToken'));
+      setTwoFaMethod(params.get('method'));
+      setSuccessMessage('Authentication successful! Please complete 2FA verification.');
+      setView('2fa');
+      setOtp('');
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (params.get('token')) {
+      const oauthToken = params.get('token');
+      // Clean up URL query parameters first so they don't linger on error/refresh
+      window.history.replaceState({}, document.title, window.location.pathname);
+      
+      setLoadingState(true);
+      setLoadingMessage('Completing GitHub Single Sign-On...');
+      
+      loginWithToken(oauthToken)
+        .then(() => {
+          console.log('[GitHub OAuth] Logged in successfully!');
+        })
+        .catch(err => {
+          console.error('[GitHub OAuth] Handshake error:', err);
+          setFormError(err.message || 'GitHub Authentication failed.');
+        })
+        .finally(() => {
+          setLoadingState(false);
+        });
     }
 
     // Pre-warm: silently ping the backend health endpoint to wake up Render from cold sleep
@@ -586,11 +616,24 @@ export const Login = () => {
               </p>
             </div>
 
-            {/* Google Sign In Button Anchor */}
-            <div className="w-full flex flex-col items-center justify-center py-6 gap-2">
+            {/* Google & GitHub Sign In Buttons */}
+            <div className="w-full flex flex-col items-center justify-center py-6 gap-3">
               <div id="googleSignInBtn" className="w-full flex justify-center"></div>
-              <p className="text-[10px] text-zinc-400 mt-1">
-                DisciplineX now authenticates exclusively via secure Google Single Sign-On.
+              
+              {/* GitHub OAuth Button */}
+              <a
+                href={`${API_BASE}/auth/github`}
+                className="w-[320px] h-[40px] px-4 rounded-full bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm font-semibold select-none flex items-center justify-center gap-2.5 transition active:scale-[0.98] cursor-pointer"
+                style={{ fontFamily: 'sans-serif' }}
+              >
+                <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+                </svg>
+                <span>Continue with GitHub</span>
+              </a>
+
+              <p className="text-[10px] text-zinc-400 mt-1 text-center leading-relaxed">
+                DisciplineX now authenticates exclusively via secure Google and GitHub Single Sign-On.
               </p>
             </div>
 
@@ -630,11 +673,24 @@ export const Login = () => {
               </p>
             </div>
 
-            {/* Google Sign In Button Anchor */}
-            <div className="w-full flex flex-col items-center justify-center py-6 gap-2">
+            {/* Google & GitHub Sign In Buttons */}
+            <div className="w-full flex flex-col items-center justify-center py-6 gap-3">
               <div id="googleSignInBtn" className="w-full flex justify-center"></div>
-              <p className="text-[10px] text-zinc-400 mt-1">
-                DisciplineX now authenticates exclusively via secure Google Single Sign-On.
+              
+              {/* GitHub OAuth Button */}
+              <a
+                href={`${API_BASE}/auth/github`}
+                className="w-[320px] h-[40px] px-4 rounded-full bg-zinc-900 hover:bg-zinc-800 dark:bg-white dark:hover:bg-zinc-100 text-white dark:text-zinc-900 border border-zinc-200 dark:border-zinc-800 text-sm font-semibold select-none flex items-center justify-center gap-2.5 transition active:scale-[0.98] cursor-pointer"
+                style={{ fontFamily: 'sans-serif' }}
+              >
+                <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/>
+                </svg>
+                <span>Continue with GitHub</span>
+              </a>
+
+              <p className="text-[10px] text-zinc-400 mt-1 text-center leading-relaxed">
+                DisciplineX now authenticates exclusively via secure Google and GitHub Single Sign-On.
               </p>
             </div>
 

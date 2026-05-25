@@ -19,8 +19,10 @@ import {
   getProfile,
   updateProfile,
   testSmtp,
-  googleAuth
+  googleAuth,
+  githubAuthCallback
 } from '../controllers/auth.controller.js';
+import passport from 'passport';
 import { protect, requireVerifiedUser } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -34,6 +36,17 @@ router.post('/resend-verification', resendVerificationEmailCode);
 router.post('/login', loginUser);
 router.post('/verify-2fa', verifyTwoFactor);
 router.post('/google-auth', googleAuth);
+
+// GitHub OAuth endpoints
+router.get('/github', passport.authenticate('github', { scope: ['user:email'] }));
+router.get(
+  '/github/callback',
+  passport.authenticate('github', { 
+    session: true,
+    failureRedirect: `${process.env.CLIENT_URL || 'http://localhost:5173'}/login?error=GitHub OAuth authentication failed` 
+  }),
+  githubAuthCallback
+);
 
 // Password Resets
 router.post('/forgot-password', requestReset);

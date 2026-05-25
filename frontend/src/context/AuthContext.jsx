@@ -158,6 +158,20 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const loginWithToken = async (token) => {
+    setError(null);
+    try {
+      localStorage.setItem('token', token);
+      const profile = await api.get('/auth/profile');
+      setUser({ ...profile, token });
+      return { ...profile, token };
+    } catch (err) {
+      localStorage.removeItem('token');
+      setError(err.message || 'Login with token failed');
+      throw err;
+    }
+  };
+
   const verifyEmailCode = async (email, code) => {
     setError(null);
     try {
@@ -395,6 +409,7 @@ export const AuthProvider = ({ children }) => {
       login, 
       signup, 
       loginWithGoogle,
+      loginWithToken,
       verifyEmailCode,
       resendVerification,
       logout, 

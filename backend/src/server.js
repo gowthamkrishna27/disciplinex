@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import session from 'express-session';
+import passport from 'passport';
+import './config/passport.js';
 import dns from 'dns';
 
 // Force DNS resolution to prefer IPv4 over IPv6 in cloud environments
@@ -53,6 +56,25 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(sanitizeRequest);
 app.use(ipRateLimiter);
+
+const isProd = process.env.NODE_ENV === 'production';
+
+// Express Session Middleware configuration
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'disciplinex_secure_session_secret_998877',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: isProd,
+    httpOnly: true,
+    sameSite: isProd ? 'none' : 'lax',
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+// Initialize Passport and Session state
+app.use(passport.initialize());
+app.use(passport.session());
 
 // Connect to Database (real MongoDB or file-based fallback)
 connectDB();
